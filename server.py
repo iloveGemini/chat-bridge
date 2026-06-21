@@ -150,37 +150,76 @@ def _resolve_preset(preset_name):
             log_print(f"[警告] 读取预设 {p_file} 失败: {e}")
     return ("default", "default", "default")
 
-def build_system_prompt(session):
-    """按会话绑定的 {preset, world, user, character} 拼装。
-    preset 在这里展开成 main/style/post 三段内容；其余分类直接按名字取内容。
-    兼容旧版会话（直接带 main/style/post 名字、无 preset 字段）。"""
+def build_header_prompt(session):
+    """
+    【顶部磁铁】只放永恒不变的客观背景定义
+    顺位：Role (Main/全局兜底) -> World Setting -> Persona -> Target User
+    """
+    _load_config()
+    global_sys = config.get("api", {}).get("system_prompt", "").strip()
     active = session.active_prompts
 
-    if "preset" in active:
-        main_name, style_name, post_name = _resolve_preset(active.get("preset"))
+    if "preset" in active and active.get("preset") not in ("", "default"):
+        main_name, _, _ = _resolve_preset(active.get("preset"))
     else:
-        # 旧版会话回退：直接用散落的 main/style/post 名字
         main_name = active.get("main", "default")
+
+    main_content = _read_prompt_content("main", main_name)
+    if (not main_content or main_name == "default") and global_sys:
+        main_content = global_sys
+
+    parts = []
+    if main_content:
+        parts.append(f"<role_definition>\n{main_content}\n</role_definition>")
+
+    w = _read_prompt_content("world", active.get("world", "default"))
+    if w:
+        parts.append(f"<world_setting>\n{w}\n</world_setting>")
+
+    c = _read_prompt_content("character", active.get("character", "default"))
+    if c:
+        parts.append(f"<persona>\n{c}\n</persona>")
+
+    u = _read_prompt_content("user", active.get("user", "default"))
+    if u:
+        parts.append(f"<target_user>\n{u}\n</target_user>")
+
+    return "\n\n".join(parts)
+
+
+def build_tail_anchor(session, memory_str=""):
+    """
+    【尾部磁铁】动态驱动上下文与强制约束（定海神针）
+    顺位：[召回的长时记忆 Memory] -> Dialogue Style -> Output Rules (Post)
+    """
+    active = session.active_prompts
+    if "preset" in active and active.get("preset") not in ("", "default"):
+        _, style_name, post_name = _resolve_preset(active.get("preset"))
+    else:
         style_name = active.get("style", "default")
         post_name = active.get("post", "default")
 
-    # 按 main → world → character → user → style → post 顺序拼装
-    ordered = [
-        ("main", main_name),
-        ("world", active.get("world", "default")),
-        ("character", active.get("character", "default")),
-        ("user", active.get("user", "default")),
-        ("style", style_name),
-        ("post", post_name),
-    ]
-
     parts = []
-    for cat, name in ordered:
-        content = _read_prompt_content(cat, name)
-        if content:
-            parts.append(f"【{cat.upper()}】\n{content}")
 
-    return "\n\n".join(parts)
+    # 1. 召回的动态记忆
+    if memory_str.strip():
+        parts.append(f"<recalled_memory>\n{memory_str.strip()}\n</recalled_memory>")
+
+    # 2. 说话文风
+    s = _read_prompt_content("style", style_name)
+    if s:
+        parts.append(f"<dialogue_style>\n{s}\n</dialogue_style>")
+
+    # 3. 压轴输出规约 (post)
+    p = _read_prompt_content("post", post_name)
+    if p:
+        parts.append(f"<output_rules>\n{p}\n</output_rules>")
+
+    compiled = "\n\n".join(parts)
+    if compiled:
+        # 用显式系统控制块包裹，防止 AI 误以为这些指令是普通用户打出来的字
+        return f"\n\n\n<system_guidance>\n{compiled}\n</system_guidance>"
+    return ""
 
 # ================= 会话对象管理 (多开核心) =================
 class ChatSession:
@@ -519,25 +558,40 @@ def call_llm_api(session_id):
         recent_rounds = _memory_cfg().get("recent_rounds", 10)
         recent_msgs = list(session.messages[-(recent_rounds * 2):])
         current_msg_len = len(session.messages)
-        base_system_prompt = build_system_prompt(session)
         last_user_text = next(
             (m.get("text", "") for m in reversed(session.messages) if m.get("role") == "user"), "")
 
-    # 锁外做 embedding + 记忆组装（含网络调用），避免阻塞该会话的其他请求
-    memory_str = build_injected_memory(session, last_user_text)
-    system_content = (f"{base_system_prompt}\n\n【记忆】\n{memory_str}"
-                      if memory_str else base_system_prompt)
+    # 1. 顶部静态人设 (退出 with 锁缩进，回到 4 空格)
+    header_prompt = build_header_prompt(session)
 
-    api_messages = [{"role": "system", "content": system_content}]
-    for m in recent_msgs:
+    # 2. 锁外检索动态记忆
+    memory_str = build_injected_memory(session, last_user_text)
+
+    # 3. 生成尾部锚定块
+    tail_anchor = build_tail_anchor(session, memory_str)
+
+    # 4. 极其优雅地拼装三明治上下文
+    api_messages = [{"role": "system", "content": header_prompt}]
+
+    for i, m in enumerate(recent_msgs):
+        is_last_msg = (i == len(recent_msgs) - 1)
+        role = m["role"]
+        raw_text = m.get("text", "")
+
         if m.get("image"):
-            content_array = [
-                {"type": "text", "text": m.get("text", "请看这张图片。")},
+            content_nodes = [
+                {"type": "text", "text": raw_text or "请看这张图片。"},
                 {"type": "image_url", "image_url": {"url": m["image"]}}
             ]
-            api_messages.append({"role": m["role"], "content": content_array})
+            if is_last_msg and tail_anchor:
+                content_nodes[0]["text"] += tail_anchor
+            api_messages.append({"role": role, "content": content_nodes})
         else:
-            api_messages.append({"role": m["role"], "content": m.get("text", "")})
+            content = raw_text
+            if is_last_msg and tail_anchor:
+                content = f"{content}{tail_anchor}"
+
+            api_messages.append({"role": role, "content": content})
 
     url = f"{api_cfg.get('base_url','').rstrip('/')}/chat/completions"
     payload = {
@@ -607,9 +661,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         "/api/sessions/rename", "/api/sessions/clone", "/api/sessions/pin",
         "/api/presets/save", "/api/presets/delete",
         "/api/toggle_mode",
+        "/api/config/save", "/api/test_models", # ⭐️ 新增：保存配置与拉取模型的路由
     }
     NO_SESSION_GET_PATHS = {
         "/api/sessions/list", "/api/presets/list", "/api/presets/get",
+        "/api/config", # ⭐️ 新增：读取全局配置的路由
     }
 
     def do_POST(self):
@@ -938,6 +994,38 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             config["mode"] = new_mode
             _save_config()
             self._json({"ok": True, "mode": new_mode})
+            
+        elif path == "/api/config/save":
+            length = int(self.headers.get("Content-Length", 0))
+            new_cfg = json.loads(_safe_decode(self.rfile.read(length)))
+            with config_lock:
+                config.update(new_cfg) # 深度更新内存中的 config
+            _save_config()
+            self._json({"ok": True})
+            return
+
+        elif path == "/api/test_models":
+            # ⭐️ 由 Python 后端代理向目标 API 发送请求，完美避开浏览器的跨域 CORS 限制
+            length = int(self.headers.get("Content-Length", 0))
+            data = json.loads(_safe_decode(self.rfile.read(length)))
+            base_url = data.get("base_url", "").rstrip("/")
+            api_key = data.get("api_key", "")
+            
+            if not base_url:
+                self._json({"ok": False, "error": "请先填写 base_url"})
+                return
+
+            # 智能兼容：如果用户没写 /models，自动补齐标准 OpenAI 兼容的 /models 路径
+            target_url = f"{base_url}/models" if not base_url.endswith("/models") else base_url
+            try:
+                req = urllib.request.Request(target_url, headers={"Authorization": f"Bearer {api_key}"})
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    res_body = json.loads(resp.read().decode("utf-8"))
+                    models = [m["id"] for m in res_body.get("data", []) if "id" in m]
+                    self._json({"ok": True, "models": models})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)})
+            return
 
         elif path == "/api/memory/summarize":
             threading.Thread(target=summarize_session, args=(session,), kwargs={"full": True}).start()
@@ -981,6 +1069,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         if path == "/api/messages":
             with session.lock: self._json(session.messages)
+            return
+        
+        if path == "/api/config":
+            with config_lock:
+                self._json(config)
             return
 
         if path == "/api/sessions/list":

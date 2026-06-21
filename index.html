@@ -754,156 +754,501 @@
       box-shadow: 0 4px 12px rgba(124, 58, 237, 0.3);
     }
 
-    [data-theme="dark"] #notify-banner {
-      background: var(--ai-bubble);
-      box-shadow: 0 4px 16px rgba(124, 58, 237, 0.4);
-    }
-
     [data-theme="dark"] .msg-proactive .msg-bubble {
       border-left-color: #a78bfa;
     }
 
     /* === 抽屉 / 弹层 === */
     .drawer-mask {
-      position: fixed; inset: 0; background: rgba(0,0,0,0.35);
-      opacity: 0; visibility: hidden; transition: opacity 0.25s;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.35);
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.25s;
       z-index: 300;
     }
+
     .sheet-mask {
-      position: fixed; inset: 0; background: rgba(0,0,0,0.35);
-      opacity: 0; visibility: hidden; transition: opacity 0.25s;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.35);
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.25s;
       z-index: 310;
     }
-    .drawer-mask.show, .sheet-mask.show { opacity: 1; visibility: visible; }
+
+    .drawer-mask.show,
+    .sheet-mask.show {
+      opacity: 1;
+      visibility: visible;
+    }
 
     .drawer {
-      position: fixed; top: 0; bottom: 0; width: 78%; max-width: 320px;
-      background: var(--surface); z-index: 301;
-      display: flex; flex-direction: column;
+      position: fixed;
+      top: 0;
+      bottom: 0;
+      width: 78%;
+      max-width: 320px;
+      background: var(--surface);
+      z-index: 301;
+      display: flex;
+      flex-direction: column;
       transition: transform 0.28s ease;
       box-shadow: var(--shadow);
     }
-    .drawer-left { left: 0; transform: translateX(-100%); }
-    .drawer-left.show { transform: translateX(0); }
-    .drawer-right { right: 0; transform: translateX(100%); padding: 16px; overflow-y: auto; }
-    .drawer-right.show { transform: translateX(0); }
+
+    .drawer-left {
+      left: 0;
+      transform: translateX(-100%);
+    }
+
+    .drawer-left.show {
+      transform: translateX(0);
+    }
+
+    .drawer-right {
+      right: 0;
+      transform: translateX(100%);
+      padding: 16px;
+      overflow-y: auto;
+    }
+
+    .drawer-right.show {
+      transform: translateX(0);
+    }
 
     .drawer-header {
-      display: flex; align-items: center; gap: 8px;
-      padding: 14px 12px; border-bottom: 0.5px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 14px 12px;
+      border-bottom: 0.5px solid var(--border);
     }
+
     .drawer-select {
-      flex: 1; padding: 8px 10px; border-radius: 10px; border: none;
-      background: var(--bg); color: var(--text); font-size: 14px;
+      flex: 1;
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: none;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
     }
+
     .drawer-icon-btn {
-      background: var(--bg); border: none; border-radius: 8px; padding: 6px;
-      color: var(--text-secondary); cursor: pointer; display: flex; align-items: center;
+      background: var(--bg);
+      border: none;
+      border-radius: 8px;
+      padding: 6px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
     }
-    .drawer-list { flex: 1; overflow-y: auto; padding: 4px 0; }
+
+    .drawer-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 4px 0;
+    }
+
     .session-item {
-      display: flex; align-items: center; gap: 10px; padding: 10px 12px;
-      cursor: pointer; border-radius: 10px; margin: 2px 6px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      cursor: pointer;
+      border-radius: 10px;
+      margin: 2px 6px;
     }
-    .session-item:hover { background: var(--bg); }
-    .session-item.active { background: var(--bg); }
-    .session-item img { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
-    .session-item-text { flex: 1; min-width: 0; }
-    .session-item-name { font-size: 14px; font-weight: 600; }
+
+    .session-item:hover {
+      background: var(--bg);
+    }
+
+    .session-item.active {
+      background: var(--bg);
+    }
+
+    .session-item img {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      object-fit: cover;
+      flex-shrink: 0;
+    }
+
+    .session-item-text {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .session-item-name {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
     .session-kebab {
-      background: none; border: none; color: var(--text-faint); cursor: pointer;
-      padding: 6px 2px; flex-shrink: 0; display: flex; align-items: center;
-      font-size: 18px; letter-spacing: 1px; line-height: 1;
+      background: none;
+      border: none;
+      color: var(--text-faint);
+      cursor: pointer;
+      padding: 6px 2px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      font-size: 18px;
+      letter-spacing: 1px;
+      line-height: 1;
     }
-    .session-kebab:active { color: var(--text); }
+
+    .session-kebab:active {
+      color: var(--text);
+    }
+
     .action-sheet-mask {
-      position: fixed; inset: 0; background: rgba(0,0,0,0.4);
-      z-index: 600; opacity: 0; visibility: hidden; transition: opacity 0.2s;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.4);
+      z-index: 600;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.2s;
     }
-    .action-sheet-mask.show { opacity: 1; visibility: visible; }
+
+    .action-sheet-mask.show {
+      opacity: 1;
+      visibility: visible;
+    }
+
     .action-sheet {
-      position: fixed; left: 10px; right: 10px; bottom: 10px;
-      z-index: 601; transform: translateY(100%); transition: transform 0.28s ease;
+      position: fixed;
+      left: 10px;
+      right: 10px;
+      bottom: 10px;
+      z-index: 601;
+      transform: translateY(100%);
+      transition: transform 0.28s ease;
       pointer-events: none;
     }
-    .action-sheet.show { transform: translateY(0); pointer-events: auto; }
+
+    .action-sheet.show {
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
     .action-sheet-group {
-      background: var(--menu-bg); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-      border-radius: 14px; overflow: hidden; margin-bottom: 8px;
+      background: var(--menu-bg);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-radius: 14px;
+      overflow: hidden;
+      margin-bottom: 8px;
     }
+
     .action-sheet-item {
-      padding: 16px; text-align: center; font-size: 17px; cursor: pointer;
-      color: var(--text); border-bottom: 0.5px solid var(--border);
+      padding: 16px;
+      text-align: center;
+      font-size: 17px;
+      cursor: pointer;
+      color: var(--text);
+      border-bottom: 0.5px solid var(--border);
     }
-    .action-sheet-item:last-child { border-bottom: none; }
-    .action-sheet-item:active { background: var(--border); }
-    .action-sheet-item.destructive { color: #ff3b30; }
+
+    .action-sheet-item:last-child {
+      border-bottom: none;
+    }
+
+    .action-sheet-item:active {
+      background: var(--border);
+    }
+
+    .action-sheet-item.destructive {
+      color: #ff3b30;
+    }
+
     .action-sheet-cancel {
-      background: var(--surface); border-radius: 14px;
-      padding: 16px; text-align: center; font-size: 17px; font-weight: 600;
-      cursor: pointer; color: var(--text);
+      background: var(--surface);
+      border-radius: 14px;
+      padding: 16px;
+      text-align: center;
+      font-size: 17px;
+      font-weight: 600;
+      cursor: pointer;
+      color: var(--text);
     }
-    .action-sheet-cancel:active { background: var(--border); }
-    .session-item-preview { font-size: 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .action-sheet-cancel:active {
+      background: var(--border);
+    }
+
+    .session-item-preview {
+      font-size: 12px;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
     .drawer-footer {
-      display: flex; gap: 8px; padding: 12px; border-top: 0.5px solid var(--border);
+      display: flex;
+      gap: 8px;
+      padding: 12px;
+      border-top: 0.5px solid var(--border);
     }
 
     .drawer-right-header {
-      display: flex; align-items: center; gap: 10px; padding-bottom: 14px;
-      border-bottom: 0.5px solid var(--border); margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding-bottom: 14px;
+      border-bottom: 0.5px solid var(--border);
+      margin-bottom: 8px;
     }
-    .drawer-right-header img { width: 44px; height: 44px; border-radius: 50%; object-fit: cover; }
-    .rp-name { flex: 1; font-size: 16px; font-weight: 600; }
+
+    .drawer-right-header img {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      object-fit: cover;
+    }
+
+    .rp-name {
+      flex: 1;
+      font-size: 16px;
+      font-weight: 600;
+    }
 
     .drawer-section-title {
-      font-size: 12px; color: var(--text-secondary); margin: 14px 4px 4px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin: 14px 4px 4px;
     }
+
     .drawer-row {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 12px 10px; border-radius: 10px; cursor: pointer; font-size: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 10px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 14px;
     }
-    .drawer-row:hover { background: var(--bg); }
-    .drawer-row-val { color: var(--text-secondary); font-size: 13px; max-width: 140px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    .drawer-row:hover {
+      background: var(--bg);
+    }
+
+    .drawer-row-val {
+      color: var(--text-secondary);
+      font-size: 13px;
+      max-width: 140px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
 
     .sheet {
-      position: fixed; left: 0; right: 0; bottom: 0; max-height: 75vh;
-      background: var(--surface); border-radius: 20px 20px 0 0;
-      z-index: 312; padding: 10px 18px 22px;
-      transform: translateY(100%); transition: transform 0.28s ease;
-      display: flex; flex-direction: column; overflow: hidden;
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      max-height: 75vh;
+      background: var(--surface);
+      border-radius: 20px 20px 0 0;
+      z-index: 312;
+      padding: 10px 18px 22px;
+      transform: translateY(100%);
+      transition: transform 0.28s ease;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
     }
-    .sheet.show { transform: translateY(0); }
-    .sheet-handle { width: 36px; height: 4px; background: var(--border); border-radius: 4px; margin: 4px auto 12px; }
-    .sheet-title { font-size: 15px; font-weight: 600; margin-bottom: 10px; }
-    .sheet-list { overflow-y: auto; flex: 1; }
+
+    .sheet.show {
+      transform: translateY(0);
+    }
+
+    .sheet-handle {
+      width: 36px;
+      height: 4px;
+      background: var(--border);
+      border-radius: 4px;
+      margin: 4px auto 12px;
+    }
+
+    .sheet-title {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 10px;
+    }
+
+    .sheet-list {
+      overflow-y: auto;
+      flex: 1;
+    }
+
     .sheet-option {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 12px 8px; border-radius: 10px; cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 8px;
+      border-radius: 10px;
+      cursor: pointer;
     }
-    .sheet-option:hover { background: var(--bg); }
-    .sheet-option.selected { background: var(--bg); color: var(--user-bubble); font-weight: 600; }
-    .sheet-option-name { display: flex; align-items: center; gap: 10px; }
+
+    .sheet-option:hover {
+      background: var(--bg);
+    }
+
+    .sheet-option.selected {
+      background: var(--bg);
+      color: var(--user-bubble);
+      font-weight: 600;
+    }
+
+    .sheet-option-name {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
     .sheet-option-name img {
-      width: 32px; height: 32px; border-radius: 50%; object-fit: cover;
-      pointer-events: none; -webkit-touch-callout: none; -webkit-user-drag: none; user-select: none;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      object-fit: cover;
+      pointer-events: none;
+      -webkit-touch-callout: none;
+      -webkit-user-drag: none;
+      user-select: none;
     }
+
     .sheet-edit-pencil {
-      background: none; border: none; color: var(--text-secondary); cursor: pointer; padding: 6px;
+      background: none;
+      border: none;
+      color: var(--text-secondary);
+      cursor: pointer;
+      padding: 6px;
     }
+
     .sheet-new-btn {
-      margin-top: 10px; padding: 10px; border: none; border-radius: 12px;
-      background: var(--bg); color: var(--text); font-size: 14px; cursor: pointer;
+      margin-top: 10px;
+      padding: 10px;
+      border: none;
+      border-radius: 12px;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+      cursor: pointer;
     }
-    .sheet-input, .sheet-textarea {
-      width: 100%; border: 1px solid var(--border); border-radius: 10px; padding: 10px;
-      background: var(--input-bg); color: var(--text); font-size: 14px; margin-bottom: 10px;
+
+    .sheet-input,
+    .sheet-textarea {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px;
+      background: var(--input-bg);
+      color: var(--text);
+      font-size: 14px;
+      margin-bottom: 10px;
       font-family: var(--font);
     }
-    .sheet-textarea { min-height: 140px; resize: vertical; flex: 1; }
-    .sheet-edit-actions { display: flex; gap: 10px; margin-top: 10px; }
-    .sheet-edit-actions button { flex: 1; padding: 10px; border-radius: 10px; border: none; font-size: 14px; cursor: pointer; }
-    .sheet-section-label { font-size: 12px; color: var(--text-secondary); margin: 8px 0 4px; }
+
+    .sheet-textarea {
+      min-height: 140px;
+      resize: vertical;
+      flex: 1;
+    }
+
+    .sheet-edit-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .sheet-edit-actions button {
+      flex: 1;
+      padding: 10px;
+      border-radius: 10px;
+      border: none;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    .sheet-section-label {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin: 8px 0 4px;
+    }
+
+    /* === 历史记录加载条 & 回到底部浮标 === */
+    .load-more-bar {
+      text-align: center;
+      font-size: 13px;
+      color: var(--text-secondary);
+      padding: 8px 16px;
+      margin: 0 auto 16px;
+      width: fit-content;
+      background: var(--surface);
+      border: 0.5px solid var(--border);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .load-more-bar:hover {
+      background: var(--border);
+      color: var(--text);
+    }
+
+    [data-theme="dark"] .load-more-bar {
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .btn-jump-bottom {
+      position: fixed;
+      right: 20px;
+      bottom: 76px;
+      z-index: 190;
+      background: var(--surface);
+      color: var(--text);
+      border: 0.5px solid var(--border);
+      border-radius: 20px;
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      opacity: 0;
+      transform: translateY(15px);
+      pointer-events: none;
+      transition: opacity 0.25s, transform 0.25s, background-color 0.2s;
+    }
+
+    .btn-jump-bottom.show {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
+
+    .btn-jump-bottom.unread {
+      background: var(--user-bubble);
+      color: #fff;
+      border-color: transparent;
+    }
+
+    [data-theme="dark"] .btn-jump-bottom:not(.unread) {
+      background: var(--ai-bubble);
+      color: #fff;
+    }
   </style>
 </head>
 
@@ -912,8 +1257,11 @@
   <div class="topbar">
     <div class="topbar-left">
       <button class="topbar-btn" id="btn-drawer-left" title="会话列表">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-          <line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"
+          stroke-linecap="round">
+          <line x1="4" y1="6" x2="20" y2="6" />
+          <line x1="4" y1="12" x2="20" y2="12" />
+          <line x1="4" y1="18" x2="20" y2="18" />
         </svg>
       </button>
     </div>
@@ -953,8 +1301,10 @@
   <div class="bottom-bar">
     <div class="input-row">
       <button class="btn-plus" id="btn-image" title="发送图片">
-        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-          <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round">
+          <line x1="12" y1="5" x2="12" y2="19" />
+          <line x1="5" y1="12" x2="19" y2="12" />
         </svg>
       </button>
       <input type="file" id="file-upload" accept="image/*" style="display:none;">
@@ -969,24 +1319,21 @@
 
       <button class="btn-send" id="btn-send" title="Send">
         <svg viewBox="0 0 24 24">
-          <path d="M3.4 20.4l17.45-7.48a1 1 0 000-1.84L3.4 3.6a.993.993 0 00-1.39.91L2 9.12c0 .5.37.93.87.99L17 12 2.87 13.88c-.5.07-.87.5-.87 1l.01 4.61c0 .71.73 1.2 1.39.91z"/>
+          <path
+            d="M3.4 20.4l17.45-7.48a1 1 0 000-1.84L3.4 3.6a.993.993 0 00-1.39.91L2 9.12c0 .5.37.93.87.99L17 12 2.87 13.88c-.5.07-.87.5-.87 1l.01 4.61c0 .71.73 1.2 1.39.91z" />
         </svg>
       </button>
     </div>
   </div>
 
-  <!-- New message notification banner... -->
-  <div id="notify-banner" style="
-  display:none; position:fixed; top:60px; left:50%; transform:translateX(-50%);
-  background:var(--user-bubble); color:#fff;
-  padding:10px 24px; border-radius:24px;
-  font-size:14px; font-weight:500;
-  box-shadow:0 4px 16px rgba(212,165,116,0.4);
-  z-index:200; cursor:pointer;
-  animation: fadeIn 0.25s ease;
-" onclick="this.style.display='none'; document.getElementById('chat-scroll').scrollTop=999999;">
-    New message ↓
-  </div>
+  <button id="btn-jump-bottom" class="btn-jump-bottom" onclick="scrollToBottom(true)">
+    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"
+      stroke-linecap="round" stroke-linejoin="round">
+      <line x1="12" y1="5" x2="12" y2="19"></line>
+      <polyline points="19 12 12 19 5 12"></polyline>
+    </svg>
+    <span id="jump-btn-text">回到底部</span>
+  </button>
 
   <div class="toast" id="toast"></div>
 
@@ -996,27 +1343,36 @@
     <div class="drawer-header">
       <select id="session-filter" class="drawer-select"></select>
       <button class="drawer-icon-btn" id="btn-new-session" title="新建会话">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"
+          stroke-linecap="round">
+          <line x1="12" y1="5" x2="12" y2="19" />
+          <line x1="5" y1="12" x2="19" y2="12" />
+        </svg>
       </button>
     </div>
     <div class="drawer-list" id="session-list"></div>
     <div class="drawer-footer">
       <button class="topbar-btn" id="btn-mode" title="切换模式">
         <svg id="mode-icon-api" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-          <path d="M20 18c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z"/>
+          <path
+            d="M20 18c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z" />
         </svg>
         <svg id="mode-icon-cli" viewBox="0 0 24 24" width="20" height="20" fill="currentColor" style="display:none;">
-          <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v12zm-2-1h-6v-2h6v2zM7.5 17l-1.41-1.41L8.67 13l-2.59-2.59L7.5 9l4 4-4 4z"/>
+          <path
+            d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v12zm-2-1h-6v-2h6v2zM7.5 17l-1.41-1.41L8.67 13l-2.59-2.59L7.5 9l4 4-4 4z" />
         </svg>
       </button>
       <button class="topbar-btn" id="btn-char-manage" title="角色管理">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-          <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"
+          stroke-linecap="round">
+          <circle cx="12" cy="8" r="4" />
+          <path d="M4 20c0-4 4-6 8-6s8 2 8 6" />
         </svg>
       </button>
       <button class="topbar-btn" id="btn-clear" title="清空当前对话" style="margin-left:auto;">
-        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
-          <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14"/>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"
+          stroke-linecap="round">
+          <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14" />
         </svg>
       </button>
     </div>
@@ -1029,17 +1385,29 @@
       <img id="rp-avatar" src="/logo.png">
       <div class="rp-name" id="rp-name">迟宴舟</div>
       <button class="drawer-icon-btn" id="btn-new-same-char" title="新建同角色会话">
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"
+          stroke-linecap="round">
+          <line x1="12" y1="5" x2="12" y2="19" />
+          <line x1="5" y1="12" x2="19" y2="12" />
+        </svg>
       </button>
     </div>
     <div class="drawer-section-title">聊天设定</div>
-    <div class="drawer-row" id="row-world" data-cat="world"><span>世界设定</span><span class="drawer-row-val" id="val-world">无</span></div>
-    <div class="drawer-row" id="row-user" data-cat="user"><span>用户设定</span><span class="drawer-row-val" id="val-user">无</span></div>
+    <div class="drawer-row" id="row-world" data-cat="world"><span>世界设定</span><span class="drawer-row-val"
+        id="val-world">无</span></div>
+    <div class="drawer-row" id="row-user" data-cat="user"><span>用户设定</span><span class="drawer-row-val"
+        id="val-user">无</span></div>
     <div class="drawer-section-title">高级</div>
-    <div class="drawer-row" id="row-preset" data-cat="preset"><span>预设</span><span class="drawer-row-val" id="val-preset">未应用</span></div>
-    <div class="drawer-row" id="row-theme" data-cat="theme"><span>主题</span><span class="drawer-row-val" id="val-theme">浅色</span></div>
-    <div class="drawer-row" id="row-memory"><span>记忆管理</span><span class="drawer-row-val" style="font-size:11px;opacity:0.5;">查看 / 总结 / 编辑</span></div>
-    <div class="drawer-row" id="row-debug"><span>调试日志</span><span class="drawer-row-val" style="font-size:11px;opacity:0.5;">上次请求</span></div>
+    <div class="drawer-row" id="row-preset" data-cat="preset"><span>预设</span><span class="drawer-row-val"
+        id="val-preset">未应用</span></div>
+    <div class="drawer-row" id="row-theme" data-cat="theme"><span>主题</span><span class="drawer-row-val"
+        id="val-theme">浅色</span></div>
+    <div class="drawer-row" id="row-memory"><span>记忆管理</span><span class="drawer-row-val"
+        style="font-size:11px;opacity:0.5;">查看 / 总结 / 编辑</span></div>
+    <div class="drawer-row" id="row-debug"><span>调试日志</span><span class="drawer-row-val"
+        style="font-size:11px;opacity:0.5;">上次请求</span></div>
+        <div class="drawer-section-title">系统配置</div>
+    <div class="drawer-row" id="row-global-config"><span>全局设置</span><span class="drawer-row-val" style="color:var(--user-bubble); font-weight:bold;">API / 记忆参数</span></div>
   </div>
 
   <!-- ============ 底部弹层：选择/编辑 ============ -->
@@ -1057,7 +1425,8 @@
     <div class="sheet-title">编辑</div>
     <input type="text" id="edit-name" class="sheet-input" placeholder="名称">
     <div id="edit-avatar-row" style="display:none;">
-      <img id="edit-avatar-preview" src="/logo.png" style="width:56px;height:56px;border-radius:50%;object-fit:cover;margin:8px 0;">
+      <img id="edit-avatar-preview" src="/logo.png"
+        style="width:56px;height:56px;border-radius:50%;object-fit:cover;margin:8px 0;">
       <input type="file" id="edit-avatar-file" accept="image/*">
     </div>
     <textarea id="edit-content" class="sheet-textarea" placeholder="内容..."></textarea>
@@ -1095,6 +1464,65 @@
     </div>
   </div>
 
+  <div class="sheet-mask" id="mask-global-config"></div>
+  <div class="sheet" id="sheet-global-config" style="max-height:88vh; width:100%; max-width:680px; margin:0 auto; left:0; right:0; border-radius:20px 20px 0 0;">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">全局 API 与记忆参数配置</div>
+    <div style="overflow-y:auto; flex:1; padding:0 6px;">
+      
+      <div class="sheet-section-label" style="font-size:13px; font-weight:bold; color:var(--user-bubble);">1. 主聊天 API (api)</div>
+      <input type="text" id="cfg-api-url" class="sheet-input" placeholder="Base URL (例如 http://127.0.0.1:2156/v1 或 https://api.siliconflow.cn/v1)">
+      <input type="password" id="cfg-api-key" class="sheet-input" placeholder="API Key">
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
+        <input type="text" id="cfg-api-model" class="sheet-input" style="margin:0; flex:1;" placeholder="手动输入 或 点击右侧拉取可用模型">
+        <select id="cfg-api-model-sel" class="sheet-input" style="margin:0; width:auto; max-width:130px; display:none;"></select>
+        <button class="sheet-new-btn" id="btn-test-api" style="margin:0; white-space:nowrap; background:var(--user-bubble); color:#fff; font-weight:bold;">测试并拉取</button>
+      </div>
+
+      <div class="sheet-section-label" style="font-size:13px; font-weight:bold; color:var(--user-bubble); margin-top:12px;">2. 独立总结 API (summary_api)</div>
+      <input type="text" id="cfg-sum-url" class="sheet-input" placeholder="Base URL">
+      <input type="password" id="cfg-sum-key" class="sheet-input" placeholder="API Key">
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
+        <input type="text" id="cfg-sum-model" class="sheet-input" style="margin:0; flex:1;" placeholder="总结专用 Model ID">
+        <select id="cfg-sum-model-sel" class="sheet-input" style="margin:0; width:auto; max-width:130px; display:none;"></select>
+        <button class="sheet-new-btn" id="btn-test-sum" style="margin:0; white-space:nowrap; background:var(--user-bubble); color:#fff; font-weight:bold;">测试并拉取</button>
+      </div>
+
+      <div class="sheet-section-label" style="font-size:13px; font-weight:bold; color:var(--user-bubble); margin-top:12px;">3. 向量检索 API (embedding)</div>
+      <label style="font-size:13px; display:flex; align-items:center; gap:8px; margin-bottom:8px; cursor:pointer;">
+        <input type="checkbox" id="cfg-emb-enabled" style="width:16px; height:16px;"> 启用长时记忆 Embedding 向量化入库
+      </label>
+      <input type="text" id="cfg-emb-url" class="sheet-input" placeholder="Base URL">
+      <input type="password" id="cfg-emb-key" class="sheet-input" placeholder="API Key">
+      <input type="text" id="cfg-emb-model" class="sheet-input" placeholder="Embedding Model (如 BAAI/bge-m3)">
+
+      <div class="sheet-section-label" style="font-size:13px; font-weight:bold; color:var(--user-bubble); margin-top:12px;">4. 记忆触发与检索参数 (memory)</div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px;">
+        <div>
+          <div class="sheet-section-label" style="margin-top:0;">附带最近轮数 (recent_rounds)</div>
+          <input type="number" id="cfg-mem-recent" class="sheet-input" style="margin:0;">
+        </div>
+        <div>
+          <div class="sheet-section-label" style="margin-top:0;">每隔几条总结 (summarize_every)</div>
+          <input type="number" id="cfg-mem-every" class="sheet-input" style="margin:0;">
+        </div>
+        <div>
+          <div class="sheet-section-label" style="margin-top:0;">粗筛召回数 (recall_n)</div>
+          <input type="number" id="cfg-mem-recall" class="sheet-input" style="margin:0;">
+        </div>
+        <div>
+          <div class="sheet-section-label" style="margin-top:0;">精筛注入数 (top_k)</div>
+          <input type="number" id="cfg-mem-topk" class="sheet-input" style="margin:0;">
+        </div>
+      </div>
+
+    </div>
+    <div class="sheet-edit-actions">
+      <button class="edit-btn-cancel" id="cfg-cancel-btn">取消</button>
+      <button class="edit-btn-save" id="cfg-save-btn">保存全局配置</button>
+    </div>
+  </div>
+
   <script>
     const API = location.origin;
     let messages = [];
@@ -1108,6 +1536,7 @@
     let wakeLock = null;
     let typingFromServer = false;
     let currentSessionId = localStorage.getItem('session_id') || 'default';
+    let maxDisplayCount = 40;
     function sid() { return 'session_id=' + encodeURIComponent(currentSessionId); }
     function withSid(url) { return url + (url.includes('?') ? '&' : '?') + sid(); }
 
@@ -1134,7 +1563,7 @@
         stopPolling(); // 彻底掐断轮询
       }
     }
-    
+
     // 增加移动端识别
     const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
@@ -1269,50 +1698,88 @@
       });
     }
 
-    function renderMessages() {
+    function renderMessages(preserveScroll = false) {
       const chat = $('chat');
       const welcome = $('welcome');
+
+      // 1. 极其干净的清场逻辑：只要数据为空，把气泡、加载条全部连根拔起
       if (messages.length === 0) {
         welcome.style.display = '';
-        chat.querySelectorAll('.msg').forEach(el => el.remove());
+        chat.querySelectorAll('.msg, .load-more-bar').forEach(el => el.remove());
         $('typing').classList.remove('show');
         return;
       }
       welcome.style.display = 'none';
 
-      const existing = chat.querySelectorAll('.msg');
-      if (existing.length > messages.length) {
-        chat.querySelectorAll('.msg').forEach(el => el.remove());
-      }
-      const startFrom = chat.querySelectorAll('.msg').length;
+      const total = messages.length;
+      const displayCount = Math.min(total, maxDisplayCount);
+      const startIndex = total - displayCount;
+      const visibleList = messages.slice(startIndex);
 
-      for (let i = startFrom; i < messages.length; i++) {
-        const m = messages[i];
+      const scrollEl = $('chat-scroll');
+      const oldScrollHeight = scrollEl.scrollHeight;
+      const oldScrollTop = scrollEl.scrollTop;
+
+      // 2. 维护顶部的“加载更多”条
+      let loadMoreEl = chat.querySelector('.load-more-bar');
+      if (startIndex > 0) {
+        if (!loadMoreEl) {
+          loadMoreEl = document.createElement('div');
+          loadMoreEl.className = 'load-more-bar';
+          loadMoreEl.onclick = () => {
+            maxDisplayCount += 50;
+            renderMessages(true);
+          };
+          chat.insertBefore(loadMoreEl, chat.firstChild);
+        }
+        loadMoreEl.textContent = `↑ 点击加载更早的消息 (还隐藏了 ${startIndex} 条)`;
+      } else if (loadMoreEl) {
+        loadMoreEl.remove();
+      }
+
+      chat.querySelectorAll('.msg').forEach(el => el.remove());
+
+      // ⭐️ 逻辑解耦点 A：【打字机触发条件】 -> 必须是非初次进场，且总数变多
+      const isLiveNewMsg = (lastCount > 0) && (total > lastCount);
+
+      visibleList.forEach((m, idxInSlice) => {
+        const actualIdx = startIndex + idxInSlice;
         const div = document.createElement('div');
         const isUser = m.role === 'user';
         div.className = 'msg msg-' + (isUser ? 'user' : 'ai');
-        div.dataset.msgIndex = i;
+        div.dataset.msgIndex = actualIdx;
         if (m.proactive) div.classList.add('msg-proactive');
 
         let contentHtml = '';
         if (m.image) contentHtml += '<img src="' + m.image + '" class="msg-img">';
         contentHtml += isUser ? escHtml(m.text) : renderMarkdown(m.text);
-        const isNewAiMsg = !isUser && i === messages.length - 1 && startFrom > 0;
+
+        // 只有真正现场收到的新消息，才播打字机
+        const needTypewriter = !isUser && actualIdx === total - 1 && isLiveNewMsg;
+
         div.innerHTML =
-          '<div class="msg-bubble">' + (isNewAiMsg ? '' : contentHtml) + '</div>' +
+          '<div class="msg-bubble">' + (needTypewriter ? '' : contentHtml) + '</div>' +
           '<div class="msg-time">' + formatTime(m.ts) + '</div>';
         chat.appendChild(div);
 
-        if (isNewAiMsg) {
+        if (needTypewriter) {
           const bubble = div.querySelector('.msg-bubble');
           typewriterReveal(bubble, contentHtml, null);
         }
-      }
+      });
 
-      if (messages.length > lastCount) {
-        lastCount = messages.length;
+      // ⭐️ 逻辑解耦点 B：【滚动条沉底条件】
+      if (preserveScroll) {
+        // 如果是点击了“加载更多”，让滚动条死死锁在老高度
+        requestAnimationFrame(() => {
+          scrollEl.scrollTop = oldScrollTop + (scrollEl.scrollHeight - oldScrollHeight);
+        });
+      } else {
+        // 只要不是在往上翻看历史，无论是初次灌入80条还是新来1条，一律给我沉底！
         scrollToBottom(true);
       }
+
+      lastCount = total;
     }
 
     let _fetchingMessages = false;
@@ -1341,7 +1808,7 @@
     async function doSubmit() {
       // 1. 如果当前正在生成，点击按钮就执行【中断】逻辑
       if (isGenerating) {
-        try { await fetch(withSid(API + '/api/interrupt'), { method: 'POST' }); } catch(e){}
+        try { await fetch(withSid(API + '/api/interrupt'), { method: 'POST' }); } catch (e) { }
         setGeneratingState(false);
         return;
       }
@@ -1417,7 +1884,7 @@
         await fetch(withSid(API + '/api/clear'), { method: 'POST' });
         messages = [];
         lastCount = 0;
-        $('chat').querySelectorAll('.msg').forEach(el => el.remove());
+        renderMessages();
         $('welcome').style.display = '';
         $('typing').classList.remove('show');
       } catch (e) { showToast('Failed'); }
@@ -1513,19 +1980,39 @@
       if (latest.role === 'assistant' && prevLastRole !== 'assistant') {
         playNotifSound();
         if (!pageVisible) flashTitle('💬 New message');
+
         const el = $('chat-scroll');
         const dist = el.scrollHeight - (el.scrollTop + el.clientHeight);
-        if (dist > 400) $('notify-banner').style.display = '';
+        // 如果新消息来时用户正停留在上方看历史，让右下角浮标变红警告
+        if (dist > 350) {
+          const jBtn = $('btn-jump-bottom');
+          if (jBtn) {
+            jBtn.classList.add('show', 'unread');
+            $('jump-btn-text').textContent = '新消息 ↓';
+          }
+        }
       }
       prevMsgCount = messages.length;
       prevLastRole = latest.role;
     }
 
-    const _origRender = renderMessages;
-    renderMessages = function () {
-      _origRender();
-      checkNewMessage();
-    };
+    // 实时滚动监听：控制右下角回到底部浮标的显隐
+    $('chat-scroll').addEventListener('scroll', function () {
+      const dist = this.scrollHeight - (this.scrollTop + this.clientHeight);
+      const btn = $('btn-jump-bottom');
+      if (!btn) return;
+
+      if (dist > 350) {
+        btn.classList.add('show');
+      } else {
+        // 一旦滚回了底部，自动解除未读红点状态
+        btn.classList.remove('show', 'unread');
+        $('jump-btn-text').textContent = '回到底部';
+      }
+    });
+
+    // 删掉原有的 const _origRender = renderMessages; 包装段落，
+    // 因为我们在 pollTick / fetchMessages 里拉到新数据本身就会调 renderMessages。
 
     let _fetchingTyping = false;
     async function fetchTypingStatus() {
@@ -1549,7 +2036,7 @@
     async function pollTick() {
       await fetchMessages();
       await fetchTypingStatus();
-      
+
       // 核心修复：只要服务器明确表示不在打字了，就立刻解除前端的锁定状态并停止轮询
       if (!typingFromServer) {
         setGeneratingState(false);
@@ -1868,7 +2355,7 @@
         }
 
         msgEl.classList.add('msg-deleting');
-        
+
         setTimeout(async () => {
           try {
             const r = await fetch(withSid(API + '/api/reroll'), {
@@ -1877,7 +2364,7 @@
               body: JSON.stringify({ index: idx })
             });
             const data = await r.json();
-            
+
             if (data.ok) {
               // 成功删除了旧消息，触发打字机动画
               messages.splice(idx, 1);
@@ -2089,8 +2576,9 @@
         if (id === currentSessionId) { closeLeft(); return; }
         currentSessionId = id;
         localStorage.setItem('session_id', id);
+        maxDisplayCount = 40; // <--- ⭐️ 补上这一行：切换会话时重置折叠
         messages = []; lastCount = 0; prevMsgCount = 0; prevLastRole = '';
-        $('chat').querySelectorAll('.msg').forEach(el => el.remove());
+        renderMessages();
         $('welcome').style.display = '';
         closeLeft();
         syncOnce();
@@ -2148,11 +2636,15 @@
         $('val-theme').textContent = isDark ? '深色' : '浅色';
 
         const cur = allSessions.find(s => s.id === currentSessionId);
+
         if (cur) {
           $('rp-avatar').src = cur.avatar || '/logo.png';
           $('rp-name').textContent = cur.character_name;
           $('topbar-avatar').src = cur.avatar || '/logo.png';
           $('topbar-title').textContent = cur.character_name;
+        } else if (allSessions.length > 0) {
+          // ⭐️ 补上这 3 行：如果本地记忆的 ID 在服务器端找不到，自动强行切到列表里的第一个有效会话！
+          switchSession(allSessions[0].id);
         } else if (allSessions.length === 0) {
           await loadSessions();
           refreshRightPanel(seed);
@@ -2206,14 +2698,14 @@
       $('row-memory').addEventListener('click', openMemoryPanel);
 
       function openMemoryPanel() {
-        const esc = s => (s == null ? '' : String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-        const post = (path, obj) => api(withSid(path), { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(obj) });
-        const BTN  = 'padding:5px 11px;border:none;border-radius:8px;font-size:12px;cursor:pointer;background:var(--user-bubble,#0a84ff);color:#fff;';
+        const esc = s => (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const post = (path, obj) => api(withSid(path), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(obj) });
+        const BTN = 'padding:5px 11px;border:none;border-radius:8px;font-size:12px;cursor:pointer;background:var(--user-bubble,#0a84ff);color:#fff;';
         const BTNG = 'padding:5px 11px;border:none;border-radius:8px;font-size:12px;cursor:pointer;background:var(--border);color:var(--text);';
-        const INP  = 'flex:1;min-width:0;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;';
-        const TA   = 'width:100%;box-sizing:border-box;padding:7px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;line-height:1.5;resize:vertical;min-height:46px;';
+        const INP = 'flex:1;min-width:0;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;';
+        const TA = 'width:100%;box-sizing:border-box;padding:7px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;line-height:1.5;resize:vertical;min-height:46px;';
         const SECH = 'font-size:12px;color:var(--text-secondary);margin:14px 0 6px;font-weight:600;';
-        const DEL  = 'background:none;border:none;color:#ff3b30;cursor:pointer;font-size:13px;padding:4px 6px;';
+        const DEL = 'background:none;border:none;color:#ff3b30;cursor:pointer;font-size:13px;padding:4px 6px;';
 
         const mask = document.createElement('div');
         mask.className = 'action-sheet-mask';
@@ -2239,15 +2731,15 @@
           if (!d || !d.counts) { bodyEl.innerHTML = '<div style="color:var(--text-secondary);padding:20px;text-align:center;">读取失败</div>'; return; }
           const m = d.meta || {};
           const unsumm = (m.total_messages || 0) - (m.boundary || 0);
-          let st = `已总结 ${m.boundary||0}/${m.total_messages||0} 条 · 事实${d.counts.facts}·事件${d.counts.events}·切片${d.counts.chunks}`;
+          let st = `已总结 ${m.boundary || 0}/${m.total_messages || 0} 条 · 事实${d.counts.facts}·事件${d.counts.events}·切片${d.counts.chunks}`;
           let col = 'var(--text-secondary)';
           if (m.state === 'running') st += ' · 总结中…';
-          else if (m.last_status === 'success') st += ` · ✓ ${m.last_time||''}`;
-          else if (m.last_status === 'failed') { st += ` · ⚠ ${m.last_error||'失败'}`; col = '#ff3b30'; }
+          else if (m.last_status === 'success') st += ` · ✓ ${m.last_time || ''}`;
+          else if (m.last_status === 'failed') { st += ` · ⚠ ${m.last_error || '失败'}`; col = '#ff3b30'; }
           const running = m.state === 'running';
           statusBar.innerHTML =
             `<div style="font-size:12px;color:${col};flex:1;min-width:140px;">${esc(st)}</div>` +
-            `<button class="mem-sum" ${running?'disabled':''} style="${BTN}${running?'opacity:.5;':''}">${running?'总结中…':(unsumm>0?('补总结 ('+unsumm+')'):'重新总结')}</button>` +
+            `<button class="mem-sum" ${running ? 'disabled' : ''} style="${BTN}${running ? 'opacity:.5;' : ''}">${running ? '总结中…' : (unsumm > 0 ? ('补总结 (' + unsumm + ')') : '重新总结')}</button>` +
             `<button class="mem-refresh" style="${BTNG}">刷新</button>`;
 
           let h = '';
@@ -2257,19 +2749,19 @@
           h += `<div style="${SECH}">硬事实 (${d.facts.length})</div>`;
           d.facts.forEach(f => {
             h += `<div class="mem-fact" data-id="${f.id}" style="display:flex;gap:5px;align-items:center;margin:5px 0;">` +
-                 `<input data-f="subject" value="${esc(f.subject)}" style="${INP}max-width:80px;">` +
-                 `<input data-f="predicate" value="${esc(f.predicate)}" style="${INP}max-width:90px;">` +
-                 `<input data-f="object" value="${esc(f.object)}" style="${INP}">` +
-                 `<button class="mem-fact-save" style="${BTN}padding:5px 8px;">✓</button>` +
-                 `<button class="mem-fact-del" style="${DEL}">✕</button></div>`;
+              `<input data-f="subject" value="${esc(f.subject)}" style="${INP}max-width:80px;">` +
+              `<input data-f="predicate" value="${esc(f.predicate)}" style="${INP}max-width:90px;">` +
+              `<input data-f="object" value="${esc(f.object)}" style="${INP}">` +
+              `<button class="mem-fact-save" style="${BTN}padding:5px 8px;">✓</button>` +
+              `<button class="mem-fact-del" style="${DEL}">✕</button></div>`;
           });
 
           h += `<div style="${SECH}">事件 (${d.events.length})</div>`;
           d.events.forEach(e => {
             h += `<div class="mem-ev" data-id="${e.id}" style="margin:8px 0;padding:8px;border:1px solid var(--border);border-radius:8px;">` +
-                 `<div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px;">[${esc(e.type)||'—'} / ${esc(e.weight)||'—'}]　重要度 ${e.importance||3}</div>` +
-                 `<textarea class="mem-ev-sum" style="${TA}min-height:40px;">${esc(e.summary)}</textarea>` +
-                 `<div style="text-align:right;margin-top:4px;"><button class="mem-ev-save" style="${BTN}">保存</button> <button class="mem-ev-del" style="${DEL}">删除</button></div></div>`;
+              `<div style="font-size:11px;color:var(--text-secondary);margin-bottom:4px;">[${esc(e.type) || '—'} / ${esc(e.weight) || '—'}]　重要度 ${e.importance || 3}</div>` +
+              `<textarea class="mem-ev-sum" style="${TA}min-height:40px;">${esc(e.summary)}</textarea>` +
+              `<div style="text-align:right;margin-top:4px;"><button class="mem-ev-save" style="${BTN}">保存</button> <button class="mem-ev-del" style="${DEL}">删除</button></div></div>`;
           });
           if (!d.facts.length && !d.events.length) h += `<div style="color:var(--text-secondary);font-size:13px;padding:14px 0;">该角色还没有记忆。点上面「补总结」从历史对话生成。</div>`;
           bodyEl.innerHTML = h;
@@ -2287,7 +2779,7 @@
               const d = await api(withSid('/api/memory/overview'));
               draw(d);
               if (!d.meta || d.meta.state !== 'running') {
-                showToast(d.meta && d.meta.last_status === 'failed' ? ('总结失败: ' + (d.meta.last_error||'')) : '总结完成');
+                showToast(d.meta && d.meta.last_status === 'failed' ? ('总结失败: ' + (d.meta.last_error || '')) : '总结完成');
                 return;
               }
             }
@@ -2295,28 +2787,28 @@
           box.querySelectorAll('.mem-save-sum').forEach(b => b.addEventListener('click', async () => {
             const key = b.dataset.key;
             const ta = box.querySelector(`.mem-sum-ta[data-key="${key}"]`);
-            const r = await post('/api/memory/edit', { table:'summaries', key, text: ta.value });
+            const r = await post('/api/memory/edit', { table: 'summaries', key, text: ta.value });
             showToast(r.ok ? '已保存' : '保存失败');
           }));
           box.querySelectorAll('.mem-fact').forEach(row => {
             const id = +row.dataset.id;
             row.querySelector('.mem-fact-save').addEventListener('click', async () => {
               const g = f => row.querySelector(`[data-f="${f}"]`).value;
-              const r = await post('/api/memory/edit', { table:'facts', id, subject:g('subject'), predicate:g('predicate'), object:g('object') });
+              const r = await post('/api/memory/edit', { table: 'facts', id, subject: g('subject'), predicate: g('predicate'), object: g('object') });
               showToast(r.ok ? '已保存' : '保存失败');
             });
             row.querySelector('.mem-fact-del').addEventListener('click', async () => {
-              await post('/api/memory/forget', { table:'facts', id }); showToast('已删除'); render();
+              await post('/api/memory/forget', { table: 'facts', id }); showToast('已删除'); render();
             });
           });
           box.querySelectorAll('.mem-ev').forEach(row => {
             const id = +row.dataset.id;
             row.querySelector('.mem-ev-save').addEventListener('click', async () => {
-              const r = await post('/api/memory/edit', { table:'events', id, summary: row.querySelector('.mem-ev-sum').value });
+              const r = await post('/api/memory/edit', { table: 'events', id, summary: row.querySelector('.mem-ev-sum').value });
               showToast(r.ok ? '已保存（已重算向量）' : '保存失败');
             });
             row.querySelector('.mem-ev-del').addEventListener('click', async () => {
-              await post('/api/memory/forget', { table:'events', id }); showToast('已删除'); render();
+              await post('/api/memory/forget', { table: 'events', id }); showToast('已删除'); render();
             });
           });
         }
@@ -2381,7 +2873,7 @@
             closeSheet('sheet-select', 'mask-sheet');
             // 修复：立即提交到后端保存，不再等到发消息时
             await api(withSid('/api/prompts/use'), {
-              method: 'POST', headers: {'Content-Type': 'application/json'},
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ [category]: name })
             });
           },
@@ -2551,7 +3043,7 @@
             closeSheet('sheet-select', 'mask-sheet');
             // 修复：立即提交到后端保存
             await api(withSid('/api/prompts/use'), {
-              method: 'POST', headers: {'Content-Type': 'application/json'},
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ preset: name })
             });
           },
@@ -2688,8 +3180,121 @@
       }
 
       // ---------- 初始化 ----------
+// ---------- 初始化 ----------
       loadSessions().then(() => refreshRightPanel(true));
+
+      // ================= 全局配置交互与模型拉取逻辑 =================
+      $('mask-global-config').addEventListener('click', () => closeSheet('sheet-global-config', 'mask-global-config'));
+      $('cfg-cancel-btn').addEventListener('click', () => closeSheet('sheet-global-config', 'mask-global-config'));
+
+      $('row-global-config').addEventListener('click', async () => {
+        closeRight();
+        showToast('正在读取后端配置...');
+        const cfg = await api('/api/config');
+        if (!cfg.ok && !cfg.mode) { showToast('读取配置失败'); return; }
+
+        // 回填 API
+        $('cfg-api-url').value = cfg.api?.base_url || '';
+        $('cfg-api-key').value = cfg.api?.api_key || '';
+        $('cfg-api-model').value = cfg.api?.model || '';
+        //$('cfg-api-sys').value = cfg.api?.system_prompt || '';
+
+        // 回填 Summary
+        $('cfg-sum-url').value = cfg.summary_api?.base_url || '';
+        $('cfg-sum-key').value = cfg.summary_api?.api_key || '';
+        $('cfg-sum-model').value = cfg.summary_api?.model || '';
+
+        // 回填 Embedding
+        $('cfg-emb-enabled').checked = !!cfg.embedding?.enabled;
+        $('cfg-emb-url').value = cfg.embedding?.base_url || '';
+        $('cfg-emb-key').value = cfg.embedding?.api_key || '';
+        $('cfg-emb-model').value = cfg.embedding?.model || '';
+
+        // 回填 Memory 设定
+        $('cfg-mem-recent').value = cfg.memory?.recent_rounds || 10;
+        $('cfg-mem-every').value = cfg.memory?.summarize_every || 16;
+        $('cfg-mem-recall').value = cfg.memory?.recall_n || 30;
+        $('cfg-mem-topk').value = cfg.memory?.top_k || 5;
+
+        openSheet('sheet-global-config', 'mask-global-config');
+      });
+
+      // 通用模型拉取生成器
+      function bindModelFetcher(btnId, urlId, keyId, inputId, selId) {
+        $(btnId).onclick = async () => {
+          const baseUrl = $(urlId).value.trim();
+          const apiKey = $(keyId).value.trim();
+          if (!baseUrl) { showToast('请先填写 Base URL'); return; }
+
+          $(btnId).disabled = true;
+          $(btnId).textContent = '连接中...';
+          try {
+            const r = await fetch(API + '/api/test_models', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ base_url: baseUrl, api_key: apiKey })
+            });
+            const d = await r.json();
+            if (d.ok && d.models?.length) {
+              showToast(`连接成功！共拉取到 ${d.models.length} 个可用模型`);
+              const sel = $(selId);
+              sel.innerHTML = '<option value="">-- 点此选择拉取到的模型 --</option>' + 
+                d.models.map(m => `<option value="${escHtml(m)}">${escHtml(m)}</option>`).join('');
+              sel.style.display = 'inline-block';
+              sel.onchange = () => { if (sel.value) $(inputId).value = sel.value; };
+            } else {
+              showToast('拉取失败: ' + (d.error || '目标地址未返回标准模型列表'));
+            }
+          } catch(e) { showToast('无法连接后端测试代理'); }
+          finally { $(btnId).disabled = false; $(btnId).textContent = '测试并拉取'; }
+        };
+      }
+
+      bindModelFetcher('btn-test-api', 'cfg-api-url', 'cfg-api-key', 'cfg-api-model', 'cfg-api-model-sel');
+      bindModelFetcher('btn-test-sum', 'cfg-sum-url', 'cfg-sum-key', 'cfg-sum-model', 'cfg-sum-model-sel');
+
+      // 保存全局配置
+      $('cfg-save-btn').onclick = async () => {
+        const payload = {
+          api: {
+            base_url: $('cfg-api-url').value.trim(),
+            api_key: $('cfg-api-key').value.trim(),
+            model: $('cfg-api-model').value.trim(),
+            //system_prompt: $('cfg-api-sys').value.trim()
+          },
+          summary_api: {
+            base_url: $('cfg-sum-url').value.trim(),
+            api_key: $('cfg-sum-key').value.trim(),
+            model: $('cfg-sum-model').value.trim()
+          },
+          embedding: {
+            enabled: $('cfg-emb-enabled').checked,
+            base_url: $('cfg-emb-url').value.trim(),
+            api_key: $('cfg-emb-key').value.trim(),
+            model: $('cfg-emb-model').value.trim()
+          },
+          memory: {
+            recent_rounds: parseInt($('cfg-mem-recent').value) || 10,
+            summarize_every: parseInt($('cfg-mem-every').value) || 16,
+            recall_n: parseInt($('cfg-mem-recall').value) || 30,
+            top_k: parseInt($('cfg-mem-topk').value) || 5
+          }
+        };
+
+        $('cfg-save-btn').textContent = '保存中...';
+        const r = await fetch(API + '/api/config/save', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const d = await r.json();
+        if (d.ok) {
+          showToast('全局配置已成功保存并实时生效！');
+          closeSheet('sheet-global-config', 'mask-global-config');
+        } else { showToast('保存失败'); }
+        $('cfg-save-btn').textContent = '保存全局配置';
+      };
+
     })();
   </script>
 </body>
+
 </html>

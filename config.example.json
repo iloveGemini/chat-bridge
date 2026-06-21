@@ -3,8 +3,7 @@
   "api": {
     "base_url": "http://127.0.0.1:2156/v1",
     "api_key": "YOUR_CHAT_API_KEY",
-    "model": "gemini-3.1-pro-preview",
-    "system_prompt": "你是一个极简的私人聊天伴侣。不要像个AI助手，用简短、自然、像朋友发微信一样的语气回复。如果话题结束可以不回复长篇大论。如果用户用中文，你就用中文。"
+    "model": "gemini-3.1-pro-preview"
   },
   "summary_api": {
     "base_url": "https://api.siliconflow.cn/v1",
