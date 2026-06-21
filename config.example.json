@@ -1,0 +1,40 @@
+{
+  "mode": "api",
+  "api": {
+    "base_url": "http://127.0.0.1:2156/v1",
+    "api_key": "YOUR_CHAT_API_KEY",
+    "model": "gemini-3.1-pro-preview",
+    "system_prompt": "你是一个极简的私人聊天伴侣。不要像个AI助手，用简短、自然、像朋友发微信一样的语气回复。如果话题结束可以不回复长篇大论。如果用户用中文，你就用中文。"
+  },
+  "summary_api": {
+    "base_url": "https://api.siliconflow.cn/v1",
+    "api_key": "YOUR_SILICONFLOW_KEY",
+    "model": "deepseek-ai/DeepSeek-V3"
+  },
+  "embedding": {
+    "enabled": true,
+    "base_url": "https://api.siliconflow.cn/v1",
+    "api_key": "YOUR_SILICONFLOW_KEY",
+    "model": "BAAI/bge-m3"
+  },
+  "rerank": {
+    "enabled": false,
+    "base_url": "https://api.siliconflow.cn/v1",
+    "api_key": "YOUR_SILICONFLOW_KEY",
+    "model": "BAAI/bge-reranker-v2-m3"
+  },
+  "memory": {
+    "recent_rounds": 25,
+    "summarize_every": 25,
+    "recall_n": 30,
+    "top_k": 5
+  },
+  "active_prompts": {
+    "main": "default",
+    "world": "default",
+    "character": "default",
+    "user": "default",
+    "style": "default",
+    "post": "default"
+  }
+}

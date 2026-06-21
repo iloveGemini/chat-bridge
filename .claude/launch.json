@@ -1,0 +1,15 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "chat-bridge",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["server.py"],
+      "port": 8800,
+      "autoPort": false,
+      "env": {
+        "PYTHONIOENCODING": "utf-8"
+      }
+    }
+  ]
+}

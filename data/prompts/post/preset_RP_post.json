@@ -1,0 +1,4 @@
+{
+  "name": "preset_RP_post",
+  "content": "<Output_Format>\n\n『YYYY/MM/DD(Weekday) Time | Location』\n\n[一个完整叙事单元，满足中断条件时将选择权交还给用户。]\n\n</Output_Format>\n"
+}
