@@ -19,11 +19,15 @@
 - ✅ 本机 localhost 访问免口令（claude_mode 长轮询 / 本地浏览器照常用），只有 LAN 设备需要登录。
 - 注意：仍是明文 SQLite + HTTP（非 HTTPS）。口令解决了「门虚掩」，传输/落盘加密留待后续。
 
-### P2 · 拆单体 + 回归测试 🟡 进行中（2026-06-22）
+### P2 · 拆单体 + 回归测试 ✅ 已完成（2026-06-22）
 index.html 3300 行、server.py 1361 行单文件，零自动化测试。
 - ✅ 给 `memory_store` 补了一组回归测试：`tests/test_memory_store.py`（迁移/写入/召回/去重/降级 + fork/migrate/delete 作用域 + 前缀防串，共 16 例）。跑法：`python tests/test_memory_store.py`。
-- ⬜ 把 index.html 拆成几个模块（渲染 / 状态 / 抽屉 / 记忆面板）——改动大、有凿坏现有 UI 的风险，下轮单独做。
+- ✅ 把 index.html（3483 行）拆出 CSS 与 JS：`app/styles.css` + `app/{auth,core,menu,drawers}.js`，index.html 瘦身到 325 行（纯结构 + link/script 引用）。
+  - 拆法：classic script 按节切分（auth=鉴权/core=状态+渲染+收发/menu=长按菜单/drawers=抽屉+记忆面板+配置），保持全局作用域与加载顺序不变。
+  - 验证：拼接还原与原文**字节完全一致**（零行为改变）；每个 JS 文件 `node --check` 独立通过；静态资源 200 + 正确 MIME。原文件备份在 `_backups/index.html.orig`。
 - 依据：「输入框 flex:1」那类小 bug 反复翻车，就是单体 + 无测试的利息。
+
+> 下一步可做：JS 仍是共享全局作用域的 classic script（拆文件但没拆耦合）。若要进一步解耦，可逐步迁到 ES module（import/export），但需逐个理清跨文件引用，建议小步慢走。
 
 ### P3 · Artifacts-Lite（往后放）
 聊天里用 sandbox iframe 渲染 AI 生成的交互网页（方案见 `to do.txt`）。
