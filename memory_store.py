@@ -1,6 +1,6 @@
 import os
 import sys
-import json
+import json  # noqa
 import time
 import array
 import math
@@ -125,6 +125,26 @@ def init_db(db_path: str) -> None:
           data TEXT, updated_at TEXT
         );
         """)
+
+        # 迁移：为 chunks 增加说话人列（细节召回时标注 RP 角色名 / 用户）
+        _cols = [r[1] for r in _conn.execute("PRAGMA table_info(chunks)").fetchall()]
+        if "speaker" not in _cols:
+            _conn.execute("ALTER TABLE chunks ADD COLUMN speaker TEXT;")
+
+        # 迁移：events 表打 3 个场景时空钢印（向后兼容，旧行为 NULL，召回时由 fallback 兜底）
+        _ev_cols = [r[1] for r in _conn.execute("PRAGMA table_info(events)").fetchall()]
+        if "scene_id" not in _ev_cols:
+            _conn.execute("ALTER TABLE events ADD COLUMN scene_id TEXT;")
+        if "time_label" not in _ev_cols:
+            _conn.execute("ALTER TABLE events ADD COLUMN time_label TEXT;")
+        if "place_label" not in _ev_cols:
+            _conn.execute("ALTER TABLE events ADD COLUMN place_label TEXT;")
+
+        # 迁移：facts 表打核心状态锁死标记（is_state=1 容量清理时免疫删除）
+        _fact_cols = [r[1] for r in _conn.execute("PRAGMA table_info(facts)").fetchall()]
+        if "is_state" not in _fact_cols:
+            _conn.execute("ALTER TABLE facts ADD COLUMN is_state INTEGER DEFAULT 0;")
+
         _conn.commit()
 
 
@@ -139,69 +159,112 @@ def close_db() -> None:
 
 # ==================== 写入数据原语 ====================
 
-def upsert_event(scope: str, summary: str, *, session_id: Optional[str] = None, 
+def upsert_event(scope: str, summary: str, *, session_id: Optional[str] = None,
                  type: Optional[str] = None, weight: Optional[str] = None,
-                 caused_by: Optional[list] = None, embedding: Optional[list[float]] = None, 
-                 importance: int = 3, msg_start: Optional[int] = None, 
-                 msg_end: Optional[int] = None) -> int:
-    """保存或追加重要事件记录，返回自增 ID"""
+                 caused_by: Optional[list] = None, embedding: Optional[list[float]] = None,
+                 importance: int = 3, msg_start: Optional[int] = None,
+                 msg_end: Optional[int] = None,
+                 scene_id: Optional[str] = None, time_label: Optional[str] = None,
+                 place_label: Optional[str] = None) -> int:
+    """保存或追加重要事件记录，返回自增 ID。scene_id/time_label/place_label 为剧情时空锚点。"""
     global _conn
     if _conn is None:
         raise RuntimeError("Database not initialized. Call init_db first.")
-    
+
     now = time.strftime("%Y-%m-%d %H:%M:%S")
     caused_by_str = json.dumps(caused_by) if caused_by is not None else '[]'
     blob = _encode_vec(embedding)
-    
+
     with _lock:
         cursor = _conn.cursor()
         cursor.execute("""
             INSERT INTO events (
-                scope, session_id, msg_start, msg_end, type, weight, 
-                summary, caused_by, embedding, importance, created_at, last_seen_at, hits
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-        """, (scope, session_id, msg_start, msg_end, type, weight, 
-              summary, caused_by_str, blob, importance, now, now))
+                scope, session_id, msg_start, msg_end, type, weight,
+                summary, caused_by, embedding, importance, created_at, last_seen_at, hits,
+                scene_id, time_label, place_label
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
+        """, (scope, session_id, msg_start, msg_end, type, weight,
+              summary, caused_by_str, blob, importance, now, now,
+              scene_id, time_label, place_label))
         _conn.commit()
         return cursor.lastrowid
 
 
-def add_chunk(scope: str, text: str, *, session_id: Optional[str] = None, 
-              msg_floor: Optional[int] = None, embedding: Optional[list[float]] = None) -> int:
-    """添加一条聊天切片细节"""
+def add_chunk(scope: str, text: str, *, session_id: Optional[str] = None,
+              msg_floor: Optional[int] = None, embedding: Optional[list[float]] = None,
+              speaker: Optional[str] = None) -> int:
+    """添加一条聊天切片细节（speaker 为说话人标签：RP 角色名 / 用户）"""
     global _conn
     if _conn is None:
         raise RuntimeError("Database not initialized.")
-    
+
     now = time.strftime("%Y-%m-%d %H:%M:%S")
     blob = _encode_vec(embedding)
-    
+
     with _lock:
         cursor = _conn.cursor()
         cursor.execute("""
-            INSERT INTO chunks (scope, session_id, msg_floor, text, embedding, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (scope, session_id, msg_floor, text, blob, now))
+            INSERT INTO chunks (scope, session_id, msg_floor, text, embedding, created_at, speaker)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (scope, session_id, msg_floor, text, blob, now, speaker))
         _conn.commit()
         return cursor.lastrowid
 
 
-def upsert_fact(scope: str, subject: str, predicate: str, obj: str) -> None:
-    """按 (scope, subject, predicate) 覆盖或写入硬事实"""
+def upsert_fact(scope: str, subject: str, predicate: str, obj: str = "",
+                is_state: bool = False, retracted: bool = False) -> None:
+    """按 (scope, subject, predicate) 覆盖或写入硬事实。
+    retracted=True：旧事实失效，静默删除该 (scope,subject,predicate)。
+    is_state=True：世界观公理/角色设定/绝对禁忌/底层称呼，容量清理时免疫删除。"""
     global _conn
     if _conn is None:
         raise RuntimeError("Database not initialized.")
-    
+
+    # 分支 A：静默抹杀（旧事实被推翻 / 失效）
+    if retracted:
+        with _lock:
+            _conn.execute(
+                "DELETE FROM facts WHERE scope=? AND subject=? AND predicate=?",
+                (scope, subject, predicate))
+            _conn.commit()
+        return
+
+    # 分支 B：更新或插入，带核心状态钢印
     now = time.strftime("%Y-%m-%d %H:%M:%S")
+    state_int = 1 if is_state else 0
     with _lock:
         _conn.execute("""
-            INSERT INTO facts (scope, subject, predicate, object, updated_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO facts (scope, subject, predicate, object, is_state, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(scope, subject, predicate) DO UPDATE SET
                 object = excluded.object,
+                is_state = excluded.is_state,
                 updated_at = excluded.updated_at
-        """, (scope, subject, predicate, obj, now))
+        """, (scope, subject, predicate, obj, state_int, now))
         _conn.commit()
+
+
+def prune_facts(scope: str, max_limit: int = 80) -> int:
+    """容量卫士：该角色事实数突破 max_limit 时，静默斩首最古老的非核心事实(is_state=0)。
+    返回实际删除条数。is_state=1 的核心设定绝对免疫。"""
+    global _conn
+    if _conn is None:
+        return 0
+    with _lock:
+        count = _conn.execute("SELECT count(*) FROM facts WHERE scope=?", (scope,)).fetchone()[0]
+        if count <= max_limit:
+            return 0
+        overflow = count - max_limit + 5  # 多删 5 条留缓冲
+        cur = _conn.execute("""
+            DELETE FROM facts
+            WHERE rowid IN (
+                SELECT rowid FROM facts
+                WHERE scope=? AND is_state=0
+                ORDER BY updated_at ASC LIMIT ?
+            )
+        """, (scope, overflow))
+        _conn.commit()
+        return cur.rowcount
 
 
 def upsert_summary(key: str, text: str) -> None:
@@ -424,8 +487,9 @@ def list_memories(scope: Optional[str] = None, kind: Optional[str] = None) -> li
                 query += " WHERE scope = ?"
                 params.append(scope)
             else:
-                query += " WHERE key LIKE ?"
-                params.append(f"%{scope}%")
+                # 关系弧按精确 key 命中，避免 sess:A 误配 sess:A2 这类前缀重叠
+                query += " WHERE key = ?"
+                params.append(f"arc:{scope}")
                 
         cursor = _conn.execute(query, params)
         for r in cursor.fetchall():
@@ -447,35 +511,149 @@ def forget(table: str, row_id: Union[int, str]) -> bool:
         return cursor.rowcount > 0
 
 
+# ==================== 作用域级操作（克隆 fork / 重命名 migrate / 删除清理）====================
+
+def _copy_scope_rows(table: str, src_scope: str, dst_scope: str, dst_session_id: Optional[str]) -> None:
+    """把某表 src_scope 下的所有行复制为 dst_scope（覆盖 scope/session_id 列），保留 embedding 等其余字段。"""
+    cols = [r[1] for r in _conn.execute(f"PRAGMA table_info({table})").fetchall()]
+    insert_cols = [c for c in cols if c != "id"]
+    select_exprs, params = [], []
+    for c in insert_cols:
+        if c == "scope":
+            select_exprs.append("?"); params.append(dst_scope)
+        elif c == "session_id":
+            select_exprs.append("?"); params.append(dst_session_id)
+        else:
+            select_exprs.append(c)
+    params.append(src_scope)
+    _conn.execute(
+        f"INSERT INTO {table} ({', '.join(insert_cols)}) "
+        f"SELECT {', '.join(select_exprs)} FROM {table} WHERE scope = ?",
+        params,
+    )
+
+
+def fork_scope(src_scope: str, dst_scope: str,
+               src_session_id: str, dst_session_id: str) -> dict:
+    """克隆：把 src 的全部记忆复制一份独立副本到 dst（之后互不影响）。
+    复制 events/chunks/facts（按 scope）+ 关系弧/会话近况/总结边界（按 key）。"""
+    global _conn
+    if _conn is None:
+        return {"ok": False, "error": "db not init"}
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    with _lock:
+        for t in ("events", "chunks", "facts"):
+            _copy_scope_rows(t, src_scope, dst_scope, dst_session_id)
+        # 关系弧 arc:<scope>
+        arc = _conn.execute("SELECT text FROM summaries WHERE key=?", (f"arc:{src_scope}",)).fetchone()
+        if arc:
+            _conn.execute("INSERT OR REPLACE INTO summaries (key, text, updated_at) VALUES (?,?,?)",
+                          (f"arc:{dst_scope}", arc[0], now))
+        # 会话近况 session:<session_id>
+        sess = _conn.execute("SELECT text FROM summaries WHERE key=?", (f"session:{src_session_id}",)).fetchone()
+        if sess:
+            _conn.execute("INSERT OR REPLACE INTO summaries (key, text, updated_at) VALUES (?,?,?)",
+                          (f"session:{dst_session_id}", sess[0], now))
+        # 总结边界 summ:<session_id>
+        m = _conn.execute("SELECT data FROM meta WHERE key=?", (f"summ:{src_session_id}",)).fetchone()
+        if m:
+            _conn.execute("INSERT OR REPLACE INTO meta (key, data, updated_at) VALUES (?,?,?)",
+                          (f"summ:{dst_session_id}", m[0], now))
+        _conn.commit()
+    return {"ok": True}
+
+
+def migrate_scope(src_scope: str, dst_scope: str,
+                  src_session_id: str, dst_session_id: str) -> dict:
+    """重命名：把 src 的记忆就地迁移到 dst（同一份，不复制），用于会话改名后保持记忆不丢。"""
+    global _conn
+    if _conn is None:
+        return {"ok": False, "error": "db not init"}
+    if src_scope == dst_scope and src_session_id == dst_session_id:
+        return {"ok": True}
+    with _lock:
+        for t in ("events", "chunks"):
+            _conn.execute(f"UPDATE {t} SET scope=?, session_id=? WHERE scope=?",
+                          (dst_scope, dst_session_id, src_scope))
+        _conn.execute("UPDATE facts SET scope=? WHERE scope=?", (dst_scope, src_scope))
+        _conn.execute("UPDATE summaries SET key=? WHERE key=?", (f"arc:{dst_scope}", f"arc:{src_scope}"))
+        _conn.execute("UPDATE summaries SET key=? WHERE key=?",
+                      (f"session:{dst_session_id}", f"session:{src_session_id}"))
+        _conn.execute("UPDATE meta SET key=? WHERE key=?",
+                      (f"summ:{dst_session_id}", f"summ:{src_session_id}"))
+        _conn.commit()
+    return {"ok": True}
+
+
+def delete_scope(scope: str, session_id: str) -> dict:
+    """删除会话时清掉它的全部记忆，避免孤儿数据堆积。"""
+    global _conn
+    if _conn is None:
+        return {"ok": False, "error": "db not init"}
+    with _lock:
+        for t in ("events", "chunks", "facts"):
+            _conn.execute(f"DELETE FROM {t} WHERE scope=?", (scope,))
+        _conn.execute("DELETE FROM summaries WHERE key IN (?, ?)",
+                      (f"arc:{scope}", f"session:{session_id}"))
+        _conn.execute("DELETE FROM meta WHERE key=?", (f"summ:{session_id}",))
+        _conn.commit()
+    return {"ok": True}
+
+
 # ==================== 最终上下文拼装核心 ====================
 
-def build_memory_context(scope: str, session_id: str, *, query_vec: Optional[list[float]] = None, 
-                         query_text: str = "", top_k: int = 5, recall_n: int = 30) -> str:
-    """多级混合检索并动态组装最终注入大模型的 Prompt 文本块"""
+def build_memory_context(scope: str, session_id: str, *, query_vec: Optional[list[float]] = None,
+                         query_text: str = "", top_k: int = 5, recall_n: int = 30,
+                         diag: Optional[dict] = None) -> str:
+    """多级混合检索并动态组装最终注入大模型的 Prompt 文本块。
+    传入 diag={} 可拿到本次召回的可观测诊断（模式/分数/命中/去重），用于日志。"""
     sections = []
-    
+
+    # 召回模式：有查询向量走向量检索，否则降级关键词/时间线
+    mode = "vector" if query_vec is not None else "keyword"
+    words = [w for w in (query_text or "").split() if w]
+    def _hit(text):
+        # 关键词模式下才有"命中"概念；向量模式返回 None（看分数即可）
+        if mode != "keyword" or not words:
+            return None
+        return any(w in (text or "") for w in words)
+    if diag is not None:
+        diag.update({"scope": scope, "mode": mode, "query": (query_text or "")[:40],
+                     "events": [], "chunks": []})
+
     # 1. 硬事实段
     facts = get_facts(scope)
     if facts:
         facts_lines = [f"{f['subject']} {f['predicate']} {f['object']}" for f in facts]
-        sections.append(f"【硬事实】\n" + "\n".join(facts_lines))
-        
+        sections.append(f"<Fact_Graph>\n" + "\n".join(facts_lines) + "\n</Fact_Graph>")
+    if diag is not None:
+        diag["facts"] = len(facts)
+
     # 2. 角色关系摘要
     arc_summary = get_summary(f"arc:{scope}")
     if arc_summary and arc_summary.strip():
         sections.append(f"【关系】\n{arc_summary.strip()}")
-        
+    if diag is not None:
+        diag["arc"] = bool(arc_summary and arc_summary.strip())
+
     # 3. 临近会话进展
     session_summary = get_summary(f"session:{session_id}")
     if session_summary and session_summary.strip():
         sections.append(f"【近况】\n{session_summary.strip()}")
-        
+    if diag is not None:
+        diag["session"] = bool(session_summary and session_summary.strip())
+
     # 4. 相似回忆提取
     events = recall_events(scope, query_vec=query_vec, query_text=query_text, k=top_k, recall_n=recall_n)
     event_summaries = [e['summary'] for e in events if e.get('summary')]
     if event_summaries:
         sections.append(f"【相关回忆】\n" + "\n".join(event_summaries))
-        
+    if diag is not None:
+        for e in events:
+            s = e.get("summary", "")
+            diag["events"].append({"score": e.get("score"), "weight": e.get("weight"),
+                                   "hit": _hit(s), "snippet": s[:32]})
+
     # 5. 精细片段提取（带智能去重逻辑）
     chunks = recall_chunks(scope, query_vec=query_vec, query_text=query_text, k=top_k, recall_n=recall_n)
     valid_chunks = []
@@ -484,14 +662,66 @@ def build_memory_context(scope: str, session_id: str, *, query_vec: Optional[lis
         if not c_text:
             continue
         # 如果当前细节片段已经是某个高维核心事件摘要的子串，则判定为冗余，跳过。
-        if any(c_text in es for es in event_summaries):
+        dropped = any(c_text in es for es in event_summaries)
+        if diag is not None:
+            diag["chunks"].append({"score": c.get("score"), "speaker": (c.get("speaker") or "").strip(),
+                                   "hit": _hit(c_text), "dropped": dropped, "snippet": c_text[:32]})
+        if dropped:
             continue
-        valid_chunks.append(c_text)
-        
+        spk = (c.get('speaker') or '').strip()
+        valid_chunks.append(f"{spk}：{c_text}" if spk else c_text)
+
     if valid_chunks:
         sections.append(f"【细节】\n" + "\n".join(valid_chunks))
-        
+
+    if diag is not None:
+        diag["empty"] = len(sections) == 0
+
     return "\n\n".join(sections) if sections else ""
+
+
+def format_recall_log(diag: dict) -> str:
+    """把 build_memory_context 的 diag 渲染成高度结构化的 ASCII 树状日志。"""
+    if not diag:
+        return "🧠 [记忆召回] 无诊断数据"
+
+    def _clean(s, max_l=26):
+        t = " ".join((s or "").split())
+        return t[:max_l] + ("..." if len(t) > max_l else "")
+
+    def _mark(it):
+        if it.get("score") is not None:
+            return f"[{it['score']:.2f}]"
+        h = it.get("hit")
+        return "[kw ✓]" if h else ("[kw ✗]" if h is False else "[—]")
+
+    evs, chs = diag.get("events", []), diag.get("chunks", [])
+    kept = [c for c in chs if not c.get("dropped")]
+    
+    q_str = _clean(diag.get("query", ""), 16)
+    head = (f"🧠 [记忆召回·{diag.get('mode')}] q=\"{q_str}\" "
+            f"│ 事实:{diag.get('facts',0)} 关系:{'✓' if diag.get('arc') else '✗'} 近况:{'✓' if diag.get('session') else '✗'} "
+            f"│ 回忆:{len(evs)} 细节:{len(kept)} (去重丢弃:{len(chs)-len(kept)})"
+            + (" ⚠️ 空召回" if diag.get("empty") else ""))
+            
+    lines = [head]
+    for i, e in enumerate(evs, 1):
+        w = f"({e['weight']})" if e.get("weight") else ""
+        lines.append(f"   ├─ 回忆{i} {_mark(e)}{w} {_clean(e.get('snippet',''), 24)}")
+        
+    for i, c in enumerate(chs, 1):
+        is_last = (i == len(chs))
+        prefix = "   └─ " if is_last else "   ├─ "
+        spk = c.get("speaker", "").strip()
+        spk_tag = f"[{spk}]: " if spk else ""
+        
+        snippet_text = _clean(c.get('snippet',''), 22)
+        if c.get("dropped"):
+            lines.append(f"{prefix}细节{i} [✗ 去重] {spk_tag}{snippet_text}")
+        else:
+            lines.append(f"{prefix}细节{i} {_mark(c)} {spk_tag}{snippet_text}")
+            
+    return "\n".join(lines)
 
 
 # ==================== 完备自动化测试集 ====================
@@ -512,7 +742,8 @@ if __name__ == "__main__":
             scope=test_scope, session_id=test_session,
             summary="跟许今闻在初夏的雨中初次相遇",
             type="相遇", weight="核心", importance=5,
-            embedding=[1.0, 0.0, 0.0]
+            embedding=[1.0, 0.0, 0.0],
+            scene_id="scene_1", time_label="Day 1·午后", place_label="言城高铁站"
         )
         # 事件二：正交向量
         upsert_event(
@@ -533,8 +764,8 @@ if __name__ == "__main__":
         add_chunk(test_scope, "雨下得很大，他主动把伞向我倾斜。", session_id=test_session, embedding=[1.0, 0.0, 0.0])
         add_chunk(test_scope, "秘密画室里挂满了未干的向日葵油画。", session_id=test_session, embedding=[0.0, 1.0, 0.0])
         
-        # 3. 写入知识图谱硬事实
-        upsert_fact(test_scope, "许今闻", "擅长", "古典油画")
+        # 3. 写入知识图谱硬事实（含核心状态钢印）
+        upsert_fact(test_scope, "许今闻", "擅长", "古典油画", is_state=True)
         upsert_fact(test_scope, "许今闻", "厌恶", "下雨天")
         
         # 4. 写入高维统计大纲与近况
@@ -551,6 +782,24 @@ if __name__ == "__main__":
         kw_results = recall_events(test_scope, query_vec=None, query_text="争执", k=3)
         assert len(kw_results) > 0, "文本检索结果不应为空"
         assert "激烈争执" in kw_results[0]['summary'], "降级后带有关键词'争执'的项目应当优先重排在首位"
+
+        # -------- 断言测试 2.5: 场景时空字段落库 + retracted/is_state/prune --------
+        vr0 = recall_events(test_scope, query_vec=[1.0, 0.0, 0.0], k=1)[0]
+        assert vr0.get("scene_id") == "scene_1" and vr0.get("place_label") == "言城高铁站", "事件应携带场景时空锚点"
+
+        # retracted：推翻"厌恶下雨天"后应被物理删除
+        upsert_fact(test_scope, "许今闻", "厌恶", retracted=True)
+        preds = {(f["subject"], f["predicate"]) for f in get_facts(test_scope)}
+        assert ("许今闻", "厌恶") not in preds, "retracted 事实应被删除"
+
+        # prune：灌入大量非核心事实后裁剪，核心事实(擅长)必须幸存
+        for i in range(90):
+            upsert_fact(test_scope, "杂项", f"偏好{i}", f"值{i}")
+        removed = prune_facts(test_scope, max_limit=80)
+        assert removed > 0, "超限应触发裁剪"
+        survivors = get_facts(test_scope)
+        assert len(survivors) <= 80, "裁剪后总数应回落到上限内"
+        assert any(f["subject"] == "许今闻" and f["predicate"] == "擅长" for f in survivors), "核心 is_state 事实应免疫删除"
         
         # -------- 人工审查 3: 渲染打印双模上下文状态 --------
         print("="*20 + " 模式一: 正常向量召回注入 " + "="*20)

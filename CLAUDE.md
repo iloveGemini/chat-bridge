@@ -44,18 +44,30 @@ read_memory("chat-bridge/real-user")   # 真实用户画像（可能不存在，
 Bash(run_in_background=true): curl -s http://localhost:8800/api/wait_pending
 ```
 
-**当后台任务返回时（解析 JSON）：**
+**当后台任务返回时（解析 JSON）：** `wait_pending` 现在是跨会话监听的，返回的 JSON 里的 `session_id` 才是这条消息真正所在的会话——**后续这一轮的每一步 API 调用都必须带上这个 `session_id`**（拼成 `?session_id=<id>`），不能省略。省略会导致请求落到 `default` 会话。
+
+前端的"等待中"锁定状态和"正在输入"动画现在统一只认 `pending`（从用户发送那一刻起就为 true，直到 `/api/reply` 写入回复才解除），不再依赖 `is_typing`，所以**不需要也不应该单独调用 `/api/typing`**——那一步纯属多余的网络往返，只会让 claude_mode 比 api 模式更慢。
 - 若 `pending: true`：
-  1. 立刻通知正在输入：`curl -s -X POST http://localhost:8800/api/typing`
-  2.（可选召回）若对话历史已被压缩、或用户提到你"应该记得"的旧事，先拉一次记忆块：
+  1.（可选召回）若对话历史已被压缩、或用户提到你"应该记得"的旧事，先拉一次记忆块：
      `curl -s "http://localhost:8800/api/memory/context?session_id=<id>&q=<用户消息>"`
      拿 facts/关系/相关回忆 作参考再回复。日常闲聊可跳过这步保持极速。
-  3. 生成回复（你就是 AI 本人，直接根据收到的 text 思考并生成对话文本，**严禁读取任何日志或JSON文件**）
-  4. 推送回复：`curl -s -X POST http://localhost:8800/api/reply -H "Content-Type: application/json" -d '{"text": "你的回复内容"}'`
-  5. 清除状态：`curl -s http://localhost:8800/api/done`
-  6. **记忆由 server 自动沉淀（每满 N 条消息自动总结入库），你无需手动复盘。** 立即启动下一轮后台监听。
+  2. 生成回复（你就是 AI 本人，直接根据收到的 text 思考并生成对话文本，**严禁读取任何日志或JSON文件**）。
+     **回复必须用 `<msg>` 信封包裹**（系统解析后只把 `<content>` 发给前端、可排版、落库）：
+     - 平时（时间地点都没大跨度变化，仍承接现场）：
+       `<msg><content>你的对话正文……</content></msg>`
+     - 发生重大时间流逝或地点转移时（吃完饭回教室、第二天清晨、去了别处），在正文前加一行自闭合场景标签，
+       id 基于 `wait_pending` 返回体里 `scene.scene_id` 整数递增（如当前 scene_12 → 新转场 scene_13）：
+       `<msg><scene id="scene_13" time="Day 2·清晨" place="教学楼走廊" /><content>正文……</content></msg>`
+     - `wait_pending` 的返回 JSON 现在带 `scene` 字段（`{scene_id, time, place}`），那是**当前时空状态**，
+       据它判断本轮要不要转场、新 id 该是多少。除 `<msg>/<scene>/<content>` 外不要输出别的标签。
+  3. 推送回复：`curl -s -X POST "http://localhost:8800/api/reply?session_id=<id>" -H "Content-Type: application/json" -d '{"text": "<msg>...你的信封...</msg>"}'`
+     服务器会解析信封、推进场景闩锁、只落干净正文；`/api/reply` 内部已清掉 `pending`，
+     **不需要再额外调用 `/api/done`**。万一漏包信封直接发纯文本，系统也会兜底把整段当正文，不报错。
+  4. **记忆由 server 自动沉淀（每满 N 条消息自动总结入库），你无需手动复盘。** 立即启动下一轮后台监听。
 - 若 `pending: false`（310 秒超时无消息）：
   立即启动下一轮后台监听。
+
+`<id>` 务必是 URL 编码后的 `session_id`（中文会话名要 `encodeURIComponent`/`urllib.parse.quote`，否则服务器会按错误编码解析出乱码会话）。
 
 ## 记忆如何工作（你只需知道这些）
 
