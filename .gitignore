@@ -9,6 +9,7 @@ _backups/
 data/memory.db
 data/memory.db-wal
 data/memory.db-shm
+data/tts/
 chat_summary.md
 input.txt
 to do(considering).txt
