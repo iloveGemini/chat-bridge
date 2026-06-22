@@ -126,6 +126,22 @@ def init_db(db_path: str) -> None:
         );
         """)
 
+        # 6. 世界书表（静态设定按需召回：always_on 常驻 + 关键词触发）
+        _conn.execute("""
+        CREATE TABLE IF NOT EXISTS lore (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          scope TEXT NOT NULL,           -- 与记忆同源隔离，如 'sess:<id>'
+          title TEXT NOT NULL,
+          keys TEXT NOT NULL,            -- JSON 数组，触发词+别名 ["教学楼","走廊"]
+          content TEXT NOT NULL,
+          priority INTEGER DEFAULT 0,    -- 抢预算时降序排序
+          always_on INTEGER DEFAULT 0,   -- 1 = Tier 0，永远注入
+          embedding BLOB,                -- 预留：语义通道用，MVP 不填
+          created_at REAL, updated_at REAL
+        );
+        """)
+        _conn.execute("CREATE INDEX IF NOT EXISTS idx_lore_scope ON lore(scope);")
+
         # 迁移：为 chunks 增加说话人列（细节召回时标注 RP 角色名 / 用户）
         _cols = [r[1] for r in _conn.execute("PRAGMA table_info(chunks)").fetchall()]
         if "speaker" not in _cols:
@@ -447,8 +463,8 @@ def update_event(row_id, *, summary=None, type=None, weight=None,
         return cur.rowcount > 0
 
 
-def update_fact(row_id, subject=None, predicate=None, obj=None) -> bool:
-    """更新一条 fact 的 SPO 字段。"""
+def update_fact(row_id, subject=None, predicate=None, obj=None, is_state=None) -> bool:
+    """更新一条 fact 的 SPO 字段及核心状态锁(is_state)。"""
     global _conn
     if _conn is None:
         return False
@@ -456,6 +472,7 @@ def update_fact(row_id, subject=None, predicate=None, obj=None) -> bool:
     if subject is not None: sets.append("subject=?"); vals.append(subject)
     if predicate is not None: sets.append("predicate=?"); vals.append(predicate)
     if obj is not None: sets.append("object=?"); vals.append(obj)
+    if is_state is not None: sets.append("is_state=?"); vals.append(1 if is_state else 0)
     if not sets:
         return False
     now = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -465,7 +482,6 @@ def update_fact(row_id, subject=None, predicate=None, obj=None) -> bool:
         cur = _conn.execute(f"UPDATE facts SET {', '.join(sets)} WHERE id=?", vals)
         _conn.commit()
         return cur.rowcount > 0
-
 
 # ==================== 调试与全量管理 ====================
 
@@ -604,10 +620,17 @@ def delete_scope(scope: str, session_id: str) -> dict:
 
 def build_memory_context(scope: str, session_id: str, *, query_vec: Optional[list[float]] = None,
                          query_text: str = "", top_k: int = 5, recall_n: int = 30,
-                         diag: Optional[dict] = None) -> str:
+                         lore_scan: str = "", diag: Optional[dict] = None) -> str:
     """多级混合检索并动态组装最终注入大模型的 Prompt 文本块。
-    传入 diag={} 可拿到本次召回的可观测诊断（模式/分数/命中/去重），用于日志。"""
+    传入 diag={} 可拿到本次召回的可观测诊断（模式/分数/命中/去重），用于日志。
+    lore_scan：世界书扫描文本（当前消息+近况+场景地点/时间），命中才注入设定。"""
     sections = []
+
+    # 0. 世界书段（静态设定，舞台背景，放最前）：always_on 常驻 + 关键词触发
+    lore_hits = recall_lore(scope, lore_scan, diag=diag)
+    if lore_hits:
+        lore_lines = [f"【{e['title']}】{e['content']}" for e in lore_hits]
+        sections.append("<world_book>\n" + "\n".join(lore_lines) + "\n</world_book>")
 
     # 召回模式：有查询向量走向量检索，否则降级关键词/时间线
     mode = "vector" if query_vec is not None else "keyword"
@@ -625,21 +648,21 @@ def build_memory_context(scope: str, session_id: str, *, query_vec: Optional[lis
     facts = get_facts(scope)
     if facts:
         facts_lines = [f"{f['subject']} {f['predicate']} {f['object']}" for f in facts]
-        sections.append(f"<Fact_Graph>\n" + "\n".join(facts_lines) + "\n</Fact_Graph>")
+        sections.append(f"<fact_graph>\n" + "\n".join(facts_lines) + "\n</fact_graph>")
     if diag is not None:
         diag["facts"] = len(facts)
 
     # 2. 角色关系摘要
     arc_summary = get_summary(f"arc:{scope}")
     if arc_summary and arc_summary.strip():
-        sections.append(f"【关系】\n{arc_summary.strip()}")
+        sections.append(f"<relation_arc>\n{arc_summary.strip()}" + "\n</relation_arc>")
     if diag is not None:
         diag["arc"] = bool(arc_summary and arc_summary.strip())
 
     # 3. 临近会话进展
     session_summary = get_summary(f"session:{session_id}")
     if session_summary and session_summary.strip():
-        sections.append(f"【近况】\n{session_summary.strip()}")
+        sections.append(f"<recent_state>\n{session_summary.strip()}" + "\n</recent_state>")
     if diag is not None:
         diag["session"] = bool(session_summary and session_summary.strip())
 
@@ -647,7 +670,7 @@ def build_memory_context(scope: str, session_id: str, *, query_vec: Optional[lis
     events = recall_events(scope, query_vec=query_vec, query_text=query_text, k=top_k, recall_n=recall_n)
     event_summaries = [e['summary'] for e in events if e.get('summary')]
     if event_summaries:
-        sections.append(f"【相关回忆】\n" + "\n".join(event_summaries))
+        sections.append(f"<episodic_memory_chain>\n" + "\n".join(event_summaries) + "\n</episodic_memory_chain>")
     if diag is not None:
         for e in events:
             s = e.get("summary", "")
@@ -672,7 +695,7 @@ def build_memory_context(scope: str, session_id: str, *, query_vec: Optional[lis
         valid_chunks.append(f"{spk}：{c_text}" if spk else c_text)
 
     if valid_chunks:
-        sections.append(f"【细节】\n" + "\n".join(valid_chunks))
+        sections.append(f"<original_dialogue>\n" + "\n".join(valid_chunks) + "\n</original_dialogue>")
 
     if diag is not None:
         diag["empty"] = len(sections) == 0
@@ -722,6 +745,103 @@ def format_recall_log(diag: dict) -> str:
             lines.append(f"{prefix}细节{i} {_mark(c)} {spk_tag}{snippet_text}")
             
     return "\n".join(lines)
+
+
+# ==================== 世界书（World Book / Lorebook）====================
+
+def _lore_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    d = dict(row)
+    d.pop("embedding", None)
+    try:
+        d["keys"] = json.loads(d.get("keys") or "[]")
+    except Exception:
+        d["keys"] = []
+    return d
+
+
+def add_lore(scope: str, title: str, content: str, *, keys: Optional[list[str]] = None,
+             priority: int = 0, always_on: bool = False,
+             embedding: Optional[list[float]] = None) -> int:
+    """新增一条世界书设定。keys 为触发词数组；always_on=True 则常驻。返回 id。"""
+    now = time.time()
+    with _lock:
+        cur = _conn.execute("""
+            INSERT INTO lore (scope, title, keys, content, priority, always_on,
+                              embedding, created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?)
+        """, (scope, title, json.dumps(keys or [], ensure_ascii=False), content,
+              int(priority), 1 if always_on else 0, _encode_vec(embedding), now, now))
+        _conn.commit()
+        return cur.lastrowid
+
+
+def list_lore(scope: str) -> list[dict]:
+    """列出某 scope 下全部世界书条目（priority 降序），供 UI 管理。"""
+    cur = _conn.execute(
+        "SELECT * FROM lore WHERE scope=? ORDER BY always_on DESC, priority DESC, id ASC",
+        (scope,))
+    return [_lore_row_to_dict(r) for r in cur.fetchall()]
+
+
+def update_lore(row_id, *, title=None, content=None, keys=None,
+                priority=None, always_on=None, embedding=None) -> bool:
+    """部分更新一条世界书条目。只改传入的字段。"""
+    sets, params = [], []
+    if title is not None:    sets.append("title=?");     params.append(title)
+    if content is not None:  sets.append("content=?");   params.append(content)
+    if keys is not None:     sets.append("keys=?");      params.append(json.dumps(keys, ensure_ascii=False))
+    if priority is not None: sets.append("priority=?");  params.append(int(priority))
+    if always_on is not None:sets.append("always_on=?"); params.append(1 if always_on else 0)
+    if embedding is not None:sets.append("embedding=?"); params.append(_encode_vec(embedding))
+    if not sets:
+        return False
+    sets.append("updated_at=?"); params.append(time.time())
+    params.append(row_id)
+    with _lock:
+        cur = _conn.execute(f"UPDATE lore SET {', '.join(sets)} WHERE id=?", params)
+        _conn.commit()
+        return cur.rowcount > 0
+
+
+def delete_lore(row_id) -> bool:
+    with _lock:
+        cur = _conn.execute("DELETE FROM lore WHERE id=?", (row_id,))
+        _conn.commit()
+        return cur.rowcount > 0
+
+
+def recall_lore(scope: str, scan_text: str, *, budget_chars: Optional[int] = None,
+                diag: Optional[dict] = None) -> list[dict]:
+    """两通道召回：always_on 常驻 + 关键词命中。
+    - scan_text：当前消息+近况+场景地点/时间，用于关键词扫描。
+    - 命中条目按 (always_on, priority, id) 排序；可选 budget_chars 截断。
+    返回 dict 列表（含 title/content/keys/priority/always_on）。"""
+    rows = [_lore_row_to_dict(r) for r in
+            _conn.execute("SELECT * FROM lore WHERE scope=?", (scope,)).fetchall()]
+    scan = scan_text or ""
+    selected, hit_log = [], []
+    for e in rows:
+        on = bool(e.get("always_on"))
+        matched = [k for k in (e.get("keys") or []) if k and k in scan]
+        if on or matched:
+            selected.append(e)
+            if diag is not None:
+                hit_log.append({"title": e.get("title"), "always_on": on,
+                                "keys_hit": matched})
+    # 排序：常驻优先，再按 priority 降序，最后 id 升序保持稳定
+    selected.sort(key=lambda e: (not e.get("always_on"), -int(e.get("priority") or 0), e.get("id") or 0))
+    # 预算截断（按正文字符数粗略估算）
+    if budget_chars is not None:
+        out, used = [], 0
+        for e in selected:
+            c = len(e.get("content") or "")
+            if used + c > budget_chars and not e.get("always_on"):
+                continue
+            out.append(e); used += c
+        selected = out
+    if diag is not None:
+        diag["lore"] = hit_log
+    return selected
 
 
 # ==================== 完备自动化测试集 ====================

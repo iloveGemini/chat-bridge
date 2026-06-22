@@ -35,5 +35,13 @@
     "user": "default",
     "style": "default",
     "post": "default"
-  }
+  },
+  "notify": {
+    "enabled": false,
+    "channel": "bark",
+    "bark": { "base_url": "https://api.day.app", "device_key": "", "group": "ChatBridge", "sound": "", "icon": "" },
+    "ntfy": { "base_url": "https://ntfy.sh", "topic": "", "token": "" },
+    "smtp": { "host": "", "port": 465, "user": "", "password": "", "to": "" }
+  },
+  "outreach": { "enabled": true }
 }

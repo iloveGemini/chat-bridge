@@ -8,7 +8,7 @@
 `C:\Claude Code` 是一个**极简聊天桥接器 / 角色扮演陪伴器**。手机浏览器访问 `http://<本机IP>:8800` 跟 AI 聊天。
 有两种回复引擎（`config.json` 的 `mode` 切换）：
 
-- **api 模式**：`server.py` 调外部 LLM 生成回复（当前是本地 gemini 代理 `127.0.0.1:2156`）。
+- **api 模式**：`server.py` 调外部 LLM 生成回复。
 - **claude_mode**：Claude Code 进程通过 `/api/wait_pending` 长轮询接管，由 Claude 本人推理生成回复（见 `CLAUDE.md` 的自动循环）。
 
 ## 2. 记忆系统总览（本项目的核心改造）

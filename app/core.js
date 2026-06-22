@@ -280,20 +280,32 @@
         if (m.image) contentHtml += '<img src="' + m.image + '" class="msg-img">';
         contentHtml += isUser ? escHtml(m.text) : renderMarkdown(m.text);
 
+        // 语音控件：每条 AI 消息都挂一个播放按钮，点了才按需合成（关着自动读也能单点听）
+        const audioHtml = (!isUser)
+          ? '<div class="tts-row"><button class="tts-btn" aria-label="播放语音">' +
+            '<span class="tts-ico">🔊</span><span class="tts-label">播放语音</span></button></div>'
+          : '';
+
         // 只有真正现场收到的新消息，才播打字机（气泡模式下不走打字机，直接铺多气泡）
         const needTypewriter = !isUser && !bubbleMode && actualIdx === total - 1 && isLiveNewMsg;
+        const isNewestLive = !isUser && actualIdx === total - 1 && isLiveNewMsg;
 
         if (needTypewriter) {
           div.innerHTML =
-            '<div class="msg-bubble"></div>' +
+            '<div class="msg-bubble"></div>' + audioHtml +
             '<div class="msg-time">' + formatTime(m.ts) + '</div>';
           chat.appendChild(div);
           typewriterReveal(div.querySelector('.msg-bubble'), contentHtml, null);
         } else {
           div.innerHTML =
-            paintBubbles(div, m) +
+            paintBubbles(div, m) + audioHtml +
             '<div class="msg-time">' + formatTime(m.ts) + '</div>';
           chat.appendChild(div);
+        }
+
+        // 自动读：仅当「语音自动读」开关打开时，新到的 AI 消息才按需合成并自动播放
+        if (isNewestLive && ttsAutoOn()) {
+          playMessageTTS(actualIdx, div.querySelector('.tts-btn'));
         }
       });
 
@@ -419,19 +431,22 @@
       } catch (e) { showToast('Failed'); }
     });
 
+    const THEME_LABELS = { light: '浅色', dark: '深色', midnight: '午夜来电', paper: '纸质墨色'  };
     function setTheme(mode) {
-      if (mode === 'dark') {
-        document.documentElement.setAttribute('data-theme', 'dark');
-        localStorage.setItem('chat-theme', 'dark');
-      } else {
+      if (!THEME_LABELS[mode]) mode = 'light';
+      if (mode === 'light') {
         document.documentElement.removeAttribute('data-theme');
-        localStorage.setItem('chat-theme', 'light');
+      } else {
+        document.documentElement.setAttribute('data-theme', mode);
       }
-      const v = $('val-theme'); if (v) v.textContent = mode === 'dark' ? '深色' : '浅色';
+      localStorage.setItem('chat-theme', mode);
+      const v = $('val-theme'); if (v) v.textContent = THEME_LABELS[mode];
     }
     (function () {
       const saved = localStorage.getItem('chat-theme');
-      if (saved === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+      if (saved && saved !== 'light' && THEME_LABELS[saved]) {
+        document.documentElement.setAttribute('data-theme', saved);
+      }
     })();
 
     async function requestWakeLock() {
@@ -455,6 +470,96 @@
         stopPolling();
       }
     });
+
+    // ===== 语音播放（按需合成 + 单实例播放） =====
+    function ttsAutoOn() { return localStorage.getItem('tts_auto') === '1'; }
+    const ttsUrlCache = {};          // text -> 已合成的音频 url，避免重复请求（server 也有文件缓存）
+    let ttsPlayer = null;            // 全局单个 Audio 实例
+    let ttsPlayingIdx = -1;
+    function stopCurrentTTS() {
+      if (ttsPlayer) { try { ttsPlayer.pause(); } catch (e) { } }
+      document.querySelectorAll('.tts-btn.playing, .tts-btn.loading')
+        .forEach(b => b.classList.remove('playing', 'loading'));
+      ttsPlayingIdx = -1;
+    }
+    async function playMessageTTS(idx, btn) {
+      const m = messages[idx];
+      if (!m || m.role === 'user') return;
+      // 再点正在播放的那条 = 停止
+      if (ttsPlayingIdx === idx && ttsPlayer && !ttsPlayer.paused) { stopCurrentTTS(); return; }
+      stopCurrentTTS();
+
+      // 合成用文本优先取带停顿标记的 voice_text；情绪取该条 emotion
+      const speakText = m.voice_text || m.text;
+      const cacheKey = speakText + '|' + (m.emotion || '');
+      let url = ttsUrlCache[cacheKey];
+      if (!url) {
+        if (btn) btn.classList.add('loading');
+        try {
+          const r = await fetch(withSid(API + '/api/tts'), {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: speakText, emotion: m.emotion || '' })
+          });
+          const d = await r.json();
+          url = (d && d.ok) ? d.audio : null;
+          if (!url && d && d.error === 'tts_disabled' && window.showToast) showToast('语音未开启（config.tts.enabled）');
+          else if (!url && window.showToast) showToast('语音合成失败');
+        } catch (e) { url = null; }
+        if (btn) btn.classList.remove('loading');
+        if (!url) return;
+        ttsUrlCache[cacheKey] = url;
+      }
+      ttsPlayer = new Audio(url);
+      ttsPlayingIdx = idx;
+      if (btn) btn.classList.add('playing');
+      ttsPlayer.onended = stopCurrentTTS;
+      ttsPlayer.onerror = stopCurrentTTS;
+      ttsPlayer.play().catch(stopCurrentTTS);
+    }
+    $('chat').addEventListener('click', (e) => {
+      const btn = e.target.closest('.tts-btn');
+      if (!btn) return;
+      const msgEl = btn.closest('.msg');
+      const idx = msgEl ? parseInt(msgEl.dataset.msgIndex) : NaN;
+      if (!isNaN(idx)) playMessageTTS(idx, btn);
+    });
+    // 语音「自动读」开关
+    (function initTTSToggle() {
+      const btn = $('btn-tts');
+      if (!btn) return;
+      const sync = () => btn.classList.toggle('active', ttsAutoOn());
+      sync();
+      btn.addEventListener('click', () => {
+        localStorage.setItem('tts_auto', ttsAutoOn() ? '0' : '1');
+        sync();
+        if (window.showToast) showToast(ttsAutoOn() ? '已开启：每条自动读' : '已关闭自动读（仍可单点播放）');
+      });
+    })();
+    // 「只读台词」开关（服务端配置 tts.skip_narration）
+    (function initNarrationToggle() {
+      const btn = $('btn-tts-narration');
+      if (!btn) return;
+      let on = false;
+      const sync = () => btn.classList.toggle('active', on);
+      fetch(API + '/api/config').then(r => r.json())
+        .then(c => { on = !!(c && c.tts && c.tts.skip_narration); sync(); })
+        .catch(() => { });
+      btn.addEventListener('click', async () => {
+        try {
+          const r = await fetch(API + '/api/tts/option', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ key: 'skip_narration', value: !on })
+          });
+          const d = await r.json();
+          if (d && d.ok) {
+            on = !!d.value; sync();
+            for (const k in ttsUrlCache) delete ttsUrlCache[k];  // 改了读法，清掉旧音频缓存
+            stopCurrentTTS();
+            if (window.showToast) showToast(on ? '只读台词：开（跳过旁白）' : '只读台词：关（整段都读）');
+          } else if (window.showToast) showToast('设置失败');
+        } catch (e) { if (window.showToast) showToast('设置失败'); }
+      });
+    })();
 
     (function () {
       let audioCtx = null;

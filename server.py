@@ -23,6 +23,8 @@ if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace", line_buffering=True)
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace", line_buffering=True)
 import memory_store
+import notify
+import scheduler
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8800
 ROOT = Path(__file__).parent
@@ -34,6 +36,8 @@ ARCHIVE_DIR = DATA_DIR / "archive"
 UPLOAD_DIR = DATA_DIR / "uploads"
 CONFIG_FILE = ROOT / "config.json"
 MEMORY_DB = DATA_DIR / "memory.db"
+JOBS_DB = DATA_DIR / "jobs.db"
+LAN_BASE = ""  # 运行时填入 http://<本机IP>:PORT，用于把相对图标路径补成绝对 URL（Bark 等推送图标用）
 
 # "预设" 只打包这三个分类
 PRESET_CATEGORIES = ["main", "style", "post"]
@@ -126,6 +130,20 @@ def _load_config():
         config.setdefault("summary_api", {"base_url": "", "api_key": "", "model": ""})
         config.setdefault("memory", {"recent_rounds": 10, "summarize_every": 16, "recall_n": 30, "top_k": 5, "recall_log": True})
         config.setdefault("auth", {"enabled": False, "password": ""})
+        # 语音合成（MiniMax 预置音色 T2A）。base_url/api_key/group_id 留空即不生效，
+        # 填上公益站或官方源就能给每条 AI 回复挂语音；voice_id 用 MiniMax 预置音色名。
+        config.setdefault("tts", {
+            "enabled": False,
+            "base_url": "https://api.minimax.chat/v1",
+            "api_key": "",
+            "group_id": "",
+            "model": "speech-01-turbo",
+            "voice_id": "female-tianmei",
+            "speed": 1.0, "vol": 1.0, "pitch": 0,
+            "format": "mp3", "sample_rate": 32000,
+            "autoplay": True,
+            "skip_narration": False,  # True=只读台词、跳过（）【】*…*旁白与『』场景头
+        })
 
 def _save_config():
     with config_lock:
@@ -182,6 +200,23 @@ def _resolve_preset(preset_name):
             log_print(f"[警告] 读取预设 {p_file} 失败: {e}")
     return ("default", "default", "default")
 
+def _get_display_name(category, file_name, default_val):
+    """读取角色/用户设定的真实展示名称"""
+    if not file_name or file_name == "default":
+        return default_val
+    p_file = PROMPTS_DIR / category / f"{_safe_name(file_name)}.json"
+    if p_file.exists():
+        try:
+            return json.loads(p_file.read_text(encoding="utf-8")).get("name", file_name)
+        except:
+            pass
+    return file_name
+
+def _apply_macros(text, char_name, user_name):
+    """替换全局宏变量 {{char}} 和 {{user}}"""
+    if not text: return text
+    return text.replace("{{char}}", char_name).replace("{{user}}", user_name)
+
 def build_header_prompt(session):
     """
     【顶部磁铁】只放永恒不变的客观背景定义
@@ -214,7 +249,7 @@ def build_header_prompt(session):
 
     u = _read_prompt_content("user", active.get("user", "default"))
     if u:
-        parts.append(f"<target_user>\n{u}\n</target_user>")
+        parts.append(f"<user_profile>\n{u}\n</user_profile>")
 
     return "\n\n".join(parts)
 
@@ -270,6 +305,7 @@ class ChatSession:
         self.messages = []
         self.pending_event = threading.Event()
         self.pending_text = ""
+        self.proactive_request = None  # claude_mode 下被调度唤醒时，存待组织的主动联系事由
         self.is_typing = False
         self.typing_ts = 0
         # 会话绑定：只存 4 个名字。preset 默认 default，world/user/character 默认 default。
@@ -390,11 +426,15 @@ def build_injected_memory(session, query_text):
     qv = embed_query(query_text) if query_text else None
     mcfg = _memory_cfg()
     diag = {}
+    # 世界书扫描文本：当前消息 + 当前场景的地点/时间（天然触发源）
+    cur_t = getattr(session, "current_time", GENESIS_SCENE["time"])
+    cur_p = getattr(session, "current_place", GENESIS_SCENE["place"])
+    lore_scan = f"{query_text or ''} {cur_p} {cur_t}"
     result = memory_store.build_memory_context(
         scope, session.session_id,
         query_vec=qv, query_text=query_text or "",
         top_k=mcfg.get("top_k", 5), recall_n=mcfg.get("recall_n", 30),
-        diag=diag)
+        lore_scan=lore_scan, diag=diag)
     # P0 召回可观测：每次召回打印一行（含模式/分数/命中/去重），方便肉眼判断准不准
     if mcfg.get("recall_log", True):
         try:
@@ -423,12 +463,16 @@ def _extract_json(text):
 # 容错铁律：信封缺失或标签破损时，绝不报错——剥掉已知标签后整段当正文，宁可丢一次结构化也不让用户收到空消息。
 
 def parse_msg_envelope(raw):
-    """解析 <msg> 信封。返回 (clean_content:str, scene:dict|None)。
-    scene 含 scene_id/time/place（缺项为 None）。解析失败时正文回退原文。"""
+    """解析 <msg> 信封。返回 (clean_content:str, scene:dict|None, meta:dict)。
+    scene 含 scene_id/time/place（缺项为 None）。
+    meta = {emotion, voice_text}：emotion 取自 <content emotion="...">；
+    voice_text 保留 <#x#> 停顿标记供 TTS，clean_content 抹掉这些标记供展示。
+    解析失败时正文回退原文。"""
     if not raw:
-        return "", None
+        return "", None, {}
     text = raw.strip()
     scene = None
+    meta = {}
 
     # 1. 抽场景元数据（自闭合 <scene .../>，属性顺序无关，容忍多空格/无斜杠）
     m = re.search(r'<scene\b([^>]*?)/?>', text, re.I)
@@ -442,19 +486,29 @@ def parse_msg_envelope(raw):
             scene = {"scene_id": sid, "time": t, "place": p}
         text = (text[:m.start()] + text[m.end():]).strip()  # 物理超度 scene 标签
 
-    # 2. 抽正文：优先 <content>…</content>
-    cm = re.search(r'<content\b[^>]*>(.*?)</content>', text, re.I | re.S)
+    # 2. 抽正文：优先 <content emotion="...">…</content>
+    cm = re.search(r'<content\b([^>]*)>(.*?)</content>', text, re.I | re.S)
     if cm:
-        content = cm.group(1).strip()
+        em = re.search(r'emotion\s*=\s*"([^"]*)"', cm.group(1), re.I)
+        if em and em.group(1).strip():
+            meta["emotion"] = em.group(1).strip()
+        inner = cm.group(2).strip()
     else:
         # 兜底：剥掉残留的 <msg>/<content> 标签，剩下的整段当正文
-        content = re.sub(r'</?(?:msg|content)\b[^>]*>', '', text, flags=re.I).strip()
-    return content, scene
+        inner = re.sub(r'</?(?:msg|content)\b[^>]*>', '', text, flags=re.I).strip()
+
+    # 3. 停顿标记 <#x#>：保留给语音，抹掉给展示
+    display = re.sub(r'<#[^>]*?#>', '', inner)
+    display = re.sub(r'[ \t]{2,}', ' ', display).strip()
+    if inner != display:
+        meta["voice_text"] = inner
+    return display, scene, meta
 
 
 def ingest_reply(session, raw_reply):
-    """解析 AI 原始输出，推进场景闩锁，返回发给前端/落库的干净正文。两模式共用。"""
-    content, scene = parse_msg_envelope(raw_reply)
+    """解析 AI 原始输出，推进场景闩锁，返回 (干净正文, meta)。两模式共用。
+    meta 含可选 emotion / voice_text，供落库后给 TTS 用。"""
+    content, scene, meta = parse_msg_envelope(raw_reply)
     if scene:
         with session.lock:
             if scene.get("scene_id"): session.current_scene_id = scene["scene_id"]
@@ -462,7 +516,149 @@ def ingest_reply(session, raw_reply):
             if scene.get("place"):    session.current_place = scene["place"]
         log_print(f"🎬 [场景转换] -> {session.current_scene_id} ({session.current_time} @ {session.current_place})")
     # 兜底：正文为空（极端：只发了 scene 标签）时退回原文，绝不给前端空消息
-    return content if content else (raw_reply or "").strip()
+    display = content if content else (raw_reply or "").strip()
+    return display, meta
+
+
+# ================= 语音合成（MiniMax 预置音色 T2A 旁路） =================
+TTS_DIR = DATA_DIR / "tts"
+
+def _tts_cfg():
+    return config.get("tts", {}) or {}
+
+def _strip_narration(text):
+    """只读台词：去掉旁白——成对（中/英）括号、【】、*…* 包裹，以及整行的 『…』场景/时间头。
+    保留 <#x#> 停顿标记不动。去完为空说明本条没台词。"""
+    t = text or ""
+    t = re.sub(r'（[^）]*）', '', t)        # 全角括号旁白
+    t = re.sub(r'\([^)]*\)', '', t)         # 半角括号旁白
+    t = re.sub(r'【[^】]*】', '', t)         # 方头括号旁白
+    t = re.sub(r'\*[^*\n]+\*', '', t)       # *星号* 旁白
+    t = re.sub(r'(?m)^\s*『[^』]*』\s*$', '', t)  # 整行场景/时间头
+    t = re.sub(r'[ \t]{2,}', ' ', t)
+    t = re.sub(r'\n{2,}', '\n', t)
+    return t.strip()
+
+def synth_tts(text, override=None):
+    """把一段回复正文合成为语音，返回可供前端播放的相对 URL（/data/tts/xxx.mp3）；
+    未开启 / 缺 key / 失败一律返回 None，绝不影响文字消息。
+    走 MiniMax T2A v2 协议，base_url/api_key/group_id 全 config 可填。
+    override：每角色/试听传入的音色覆盖（voice_id/speed/pitch/vol/model），缺省回落 config.tts。"""
+    cfg = _tts_cfg()
+    if not cfg.get("enabled"):
+        return None
+    base = (cfg.get("base_url") or "").strip().rstrip("/")
+    key = (cfg.get("api_key") or "").strip()
+    if not base or not key:
+        return None
+
+    # 去掉排版/旁白用的标签残留，但保留 MiniMax 停顿标记 <#x#>（不以 < 后紧跟 # 的不删）
+    speak = re.sub(r"<(?!#)[^>]*?>", "", (text or "")).strip()
+    # 只读台词：去掉括号旁白后再合成；去完为空说明本条没台词，直接不出声
+    if cfg.get("skip_narration"):
+        speak = _strip_narration(speak)
+    if not speak:
+        return None
+    if len(speak) > 800:   # 过长截断，避免合成超时/超额
+        speak = speak[:800]
+
+    # 角色音色覆盖优先，缺项回落到全局 config.tts
+    ov = override or {}
+    def _pick(k, d):
+        v = ov.get(k)
+        return v if v not in (None, "") else cfg.get(k, d)
+    voice_id = _pick("voice_id", "female-tianmei")
+    model = _pick("model", "speech-01-turbo")
+    fmt = str(_pick("format", "mp3")).lower()
+    speed = float(_pick("speed", 1.0))
+    vol = float(_pick("vol", 1.0))
+    pitch = int(_pick("pitch", 0))
+    sample_rate = int(_pick("sample_rate", 32000))
+    emotion = str(_pick("emotion", "") or "").strip()  # 每条消息的情绪（happy/sad/...），空则不传
+
+    # 缓存键含全部影响音频的参数，避免换音色/语速/情绪后还命中旧文件
+    h = hashlib.md5(f"{model}|{voice_id}|{speed}|{vol}|{pitch}|{emotion}|{speak}".encode("utf-8")).hexdigest()
+    TTS_DIR.mkdir(parents=True, exist_ok=True)
+    out_file = TTS_DIR / f"{h}.{fmt}"
+    rel_url = f"/data/tts/{out_file.name}"
+    if out_file.exists() and out_file.stat().st_size > 0:
+        return rel_url
+
+    url = base + "/t2a_v2"
+    gid = (cfg.get("group_id") or "").strip()
+    if gid:
+        url += f"?GroupId={gid}"
+    payload = {
+        "model": model,
+        "text": speak,
+        "stream": False,
+        "voice_setting": {
+            "voice_id": voice_id,
+            "speed": speed,
+            "vol": vol,
+            "pitch": pitch,
+            **({"emotion": emotion} if emotion else {}),
+        },
+        "audio_setting": {
+            "sample_rate": sample_rate,
+            "bitrate": 128000,
+            "format": fmt,
+            "channel": 1,
+        },
+    }
+    try:
+        rq = urllib.request.Request(
+            url, data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json",
+                     "Authorization": f"Bearer {key}"})
+        with urllib.request.urlopen(rq, timeout=60) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        log_print(f"🔇 [TTS] 请求失败: {e}")
+        return None
+
+    # MiniMax 标准返回：data.audio = hex 编码音频字节
+    data = (result.get("data") or {}) if isinstance(result, dict) else {}
+    audio_hex = data.get("audio")
+    if not audio_hex:
+        log_print(f"🔇 [TTS] 无音频返回: base_resp={result.get('base_resp') if isinstance(result, dict) else result}")
+        return None
+    try:
+        audio_bytes = bytes.fromhex(audio_hex)
+    except ValueError:
+        try:   # 个别代理返回 base64 而非 hex，兜底再试一次
+            audio_bytes = base64.b64decode(audio_hex)
+        except Exception:
+            log_print("🔇 [TTS] 音频解码失败（既非 hex 也非 base64）")
+            return None
+    out_file.write_bytes(audio_bytes)
+    log_print(f"🔊 [TTS] 合成成功 {voice_id} {len(audio_bytes)}B -> {rel_url}")
+    return rel_url
+
+
+def _attach_tts(msg):
+    """给一条 assistant 消息就地挂上 audio 字段；失败静默跳过，文字照常。"""
+    try:
+        u = synth_tts(msg.get("text", ""))
+        if u:
+            msg["audio"] = u
+    except Exception as e:
+        log_print(f"🔇 [TTS] 挂载异常: {e}")
+    return msg
+
+
+def _character_voice(char_name):
+    """读某角色 prompt json 里的 voice 覆盖（{voice_id, speed, pitch, ...}）；没有就 {}。"""
+    try:
+        fp = PROMPTS_DIR / "character" / f"{_safe_name(char_name)}.json"
+        if fp.exists():
+            d = json.loads(fp.read_text(encoding="utf-8"))
+            v = d.get("voice")
+            if isinstance(v, dict):
+                return v
+    except Exception:
+        pass
+    return {}
 
 
 def _scene_stamp(session):
@@ -477,13 +673,27 @@ def build_scene_block(session):
     cur_id = getattr(session, "current_scene_id", GENESIS_SCENE["scene_id"])
     cur_t = getattr(session, "current_time", GENESIS_SCENE["time"])
     cur_p = getattr(session, "current_place", GENESIS_SCENE["place"])
-    return (
+    block = (
         "<current_scene_state>\n"
         f"当前场景ID：{cur_id}\n"
         f"当前剧情时间：{cur_t}\n"
         f"当前所处地点：{cur_p}\n"
         "</current_scene_state>\n"
     )
+    # 仅在语音开启时追加「情绪+停顿」语音规约，避免无谓占用上下文
+    if _tts_cfg().get("enabled"):
+        block += (
+            "<voice_directive>\n"
+            "本轮回复会被合成语音朗读，请在 <content> 上按情绪加一个 emotion 属性，并在正文里酌情插停顿：\n"
+            "1) 情绪：在 <content> 标签上写 emotion，取值只能是 "
+            "happy/sad/angry/fearful/surprised/disgusted/neutral 之一，按本条语气选最贴切的；"
+            "拿不准就用 neutral。例：<content emotion=\"happy\">…</content>\n"
+            "2) 停顿：在需要停顿/迟疑/换气处插 <#秒数#> 标记（秒数 0.1~1.5，如 <#0.4#>），"
+            "用于断句和情绪留白，别滥用，一条最多三五处。标记只服务语音，会自动从聊天显示里隐藏。\n"
+            "其余照常用 <msg> 信封，不要输出别的标签。\n"
+            "</voice_directive>\n"
+        )
+    return block
 
 
 SUMMARY_SYSTEM_PROMPT = """你是记忆分析师。对比【已有记忆状态】与【新对话】，只提取新对话里【新增】的、能改变未来互动方式的信息；严格增量，绝不重复已有内容。只输出一个 JSON 对象，不要任何解释或代码围栏。
@@ -761,9 +971,602 @@ def summarize_session(session, full=False):
         if _summ_meta(sid).get("state") == "running":
             _set_summ_meta(sid, state="idle")
 
+# ================= 设定助手（原生 tool calling）=================
+# 这是一个专用角色：用 OpenAI 原生 tool_calls，帮用户把设定分到「核心(常驻) / 世界书(触发)」、
+# 配触发词、整理预设。硬边界：它只能调下面注册的这几个数据层工具，工具实现只碰 data 层，
+# 注册表里根本没有「改代码/读写文件」这类工具，所以模型从构造上够不到项目代码。
+ASSISTANT_CHAR_KEY = "__assistant__"
+ASSISTANT_MAX_ROUNDS = 8
+
+BUILTIN_ASSISTANT_PROMPT = """你是「设定助手」，这个角色扮演陪聊软件的内置配置助理。你的职责是帮用户把一整套设定配好——角色、世界、用户、文风、预设、世界书——让自定义门槛尽量低、陪聊体验尽量好。你不扮演任何角色，用简洁、务实、口语的中文跟用户协作，多给建议、少说废话。
+
+# 软件的设定体系（你必须懂的背景）
+
+注入给聊天 AI 的内容分这么几块，你的工作就是把它们配好：
+
+1. 提示词文件（一类一个具名文件，可复用到多个会话）：
+   - character 角色设定(persona)：这个角色是谁——身份、性格、说话方式、动机、与用户的关系。
+   - world 世界设定：故事的时代/地点/规则/势力等跨场景稳定的大背景。
+   - user 用户设定：用户在故事里是谁、和角色什么关系、怎么称呼。
+   - main 主提示词：最顶层的总指令/扮演框架（高级，通常不用动）。
+   - style 文风：句子节奏、人称、段落长度、要不要动作神态描写。
+   - post 输出规则：硬性约束，比如禁止出戏、不许替用户行动、长度限制。
+
+2. 预设(preset)：把 main + style + post 三个打成一个包。会话绑定预设后，这三项一起生效。
+   （注意：main/style/post 不能单独绑给会话，必须通过预设生效；world/user/character 可以直接绑。）
+
+3. 世界书(lore)：角色的设定细节库，分两层，这是注意力优化的关键：
+   - 核心层(always_on=true)：角色身份/语气骨架这种「必须永远在场」的，要短，几句话，不需要触发词。
+   - 触发层(keyed)：世界观细节、地点、配角、历史背景这种「只在相关场景才需要」的。每条配触发词，聊天里出现触发词、或当前场景地点/时间命中时才注入。
+
+核心切分原则：persona/world/user 放稳定的大框架；零碎的、只在特定场景相关的细节，一律下放成带触发词的世界书条目。别把一大坨细节全塞进 persona——那会稀释聊天 AI 的注意力。
+
+# 你怎么干活
+1. 先 list_targets 看有哪些会话可配置，跟用户确认配哪一个，拿到 target_session_id；之后所有绑定/世界书操作都带上它。
+2. 动手前先摸现状：list_prompts / get_prompt / list_lore / list_presets，看已有什么，避免覆盖用户辛苦写的东西。
+3. 听用户用大白话描述他想要的角色/故事，由你翻译成规范设定：
+   - 写 persona / world / user：save_prompt 存文件，再 bind_prompt 绑到目标会话。
+   - 配文风：save_prompt 存 style / post，再 save_preset 打成预设，bind_preset 绑给会话。
+   - 拆世界书：判断哪些是核心(always_on)、哪些带触发词，用 add_lore 逐条写。
+4. 每写一批，简短复述你写了什么、为什么这么分，让用户确认；大改先讲方案再动手。
+
+# 怎么把设定写好（你给用户的专业建议）
+- 角色设定：写「具体行为」而非「抽象标签」。不是「她很高冷」，而是「话少，回应常用单字；在意的人面前才会多说，还嘴硬」。给口头禅、习惯动作、底线和软肋、与用户的关系定位。
+- 世界设定：只放跨场景不变的规则和背景，别写具体剧情。具体地点/事件下放世界书。
+- 用户设定：交代清楚用户的身份、与角色的关系、希望被怎么称呼，这样 AI 不会自说自话。
+- 文风：明确人称、句子长短、要不要心理/动作描写、对话与叙述的比例；给一两句范例最有效。
+- 输出规则：写成硬约束清单，比如「不替用户说话/行动」「不剧透未发生的事」「单次回复 ≤N 段」。
+- 触发词：用聊天里真会出现的专有名词——角色名、地名、物件名，并补上别名/简称，命中率才高。
+- 宁可多条短设定，不要一条大杂烩；每条聚焦一个主题，方便单独触发和维护。
+
+# 规矩
+- 只能用提供的工具，且只动数据层（提示词文件 / 预设 / 世界书）。你没有、也绝不声称有读写项目代码或任意文件的能力。
+- 不要覆盖或删除 default 和系统项；改用户已有内容前先 get 看一眼，别盲写。
+- keys 触发词用数组传；常驻条目(always_on)不填 keys。"""
+
+
+def _assistant_tool_defs():
+    """注册给设定助手的工具白名单（OpenAI function schema）。= 硬边界。"""
+    target = {"target_session_id": {"type": "string",
+              "description": "要配置的会话 id，来自 list_targets。所有设定操作必填。"}}
+    return [
+        {"type": "function", "function": {
+            "name": "list_targets",
+            "description": "列出所有可配置的聊天会话（排除设定助手自己）。返回每个会话的 id、角色名。",
+            "parameters": {"type": "object", "properties": {}}}},
+        {"type": "function", "function": {
+            "name": "list_lore",
+            "description": "列出某会话已有的世界书条目（核心+触发），用于了解现状、避免重复。",
+            "parameters": {"type": "object", "properties": dict(target), "required": ["target_session_id"]}}},
+        {"type": "function", "function": {
+            "name": "add_lore",
+            "description": "给某会话新增一条设定。核心设定 always_on=true 不填 keys；细节设定填 keys 触发词。",
+            "parameters": {"type": "object", "properties": dict(target, **{
+                "title": {"type": "string", "description": "条目标题，如「角色核心」「教学楼三楼」"},
+                "content": {"type": "string", "description": "设定正文"},
+                "keys": {"type": "array", "items": {"type": "string"},
+                         "description": "触发词数组（含别名），如 [\"教学楼\",\"琴房\"]。常驻条目留空。"},
+                "always_on": {"type": "boolean", "description": "是否常驻(核心层)。默认 false。"},
+                "priority": {"type": "integer", "description": "抢注入预算时的排序权重，默认 0。"}}),
+                "required": ["target_session_id", "title", "content"]}}},
+        {"type": "function", "function": {
+            "name": "update_lore",
+            "description": "按 id 部分更新一条设定条目，只改传入字段。",
+            "parameters": {"type": "object", "properties": dict(target, **{
+                "id": {"type": "integer", "description": "条目 id"},
+                "title": {"type": "string"}, "content": {"type": "string"},
+                "keys": {"type": "array", "items": {"type": "string"}},
+                "always_on": {"type": "boolean"}, "priority": {"type": "integer"}}),
+                "required": ["target_session_id", "id"]}}},
+        {"type": "function", "function": {
+            "name": "delete_lore",
+            "description": "按 id 删除一条设定条目。",
+            "parameters": {"type": "object", "properties": dict(target, **{
+                "id": {"type": "integer", "description": "条目 id"}}),
+                "required": ["target_session_id", "id"]}}},
+        # ----- 提示词文件（角色/世界/用户/文风/输出规则/主提示词）-----
+        {"type": "function", "function": {
+            "name": "list_prompts",
+            "description": "列出某类提示词文件的名字与显示名。category 取值：character/world/user/main/style/post。",
+            "parameters": {"type": "object", "properties": {
+                "category": {"type": "string", "enum": PROMPT_CATEGORIES}},
+                "required": ["category"]}}},
+        {"type": "function", "function": {
+            "name": "get_prompt",
+            "description": "读取某个提示词文件的正文，改之前先看现状。",
+            "parameters": {"type": "object", "properties": {
+                "category": {"type": "string", "enum": PROMPT_CATEGORIES},
+                "name": {"type": "string", "description": "文件名(英文/拼音标识)，如 xujinwen"}},
+                "required": ["category", "name"]}}},
+        {"type": "function", "function": {
+            "name": "save_prompt",
+            "description": "新建或更新一个提示词文件（存在即覆盖）。不能写 default 或系统保留名。写完通常还要 bind 才生效。",
+            "parameters": {"type": "object", "properties": {
+                "category": {"type": "string", "enum": PROMPT_CATEGORIES},
+                "name": {"type": "string", "description": "文件名标识，英文或拼音，唯一"},
+                "content": {"type": "string", "description": "提示词正文"},
+                "display_name": {"type": "string", "description": "给人看的显示名，如「许今闻」。不填则用 name。"}},
+                "required": ["category", "name", "content"]}}},
+        {"type": "function", "function": {
+            "name": "bind_prompt",
+            "description": "把某个 character/world/user 提示词绑定到目标会话使其生效。（main/style/post 不在此绑，要走预设。）",
+            "parameters": {"type": "object", "properties": dict(target, **{
+                "category": {"type": "string", "enum": ["character", "world", "user"]},
+                "name": {"type": "string", "description": "要绑定的提示词文件名"}}),
+                "required": ["target_session_id", "category", "name"]}}},
+        # ----- 预设（打包 main/style/post）-----
+        {"type": "function", "function": {
+            "name": "list_presets",
+            "description": "列出所有预设及其包含的 main/style/post。",
+            "parameters": {"type": "object", "properties": {}}}},
+        {"type": "function", "function": {
+            "name": "get_preset",
+            "description": "读取某个预设包含的 main/style/post 引用。",
+            "parameters": {"type": "object", "properties": {
+                "name": {"type": "string"}}, "required": ["name"]}}},
+        {"type": "function", "function": {
+            "name": "save_preset",
+            "description": "新建或更新一个预设，把 main/style/post 三个提示词文件名打成一个包。这些文件需先用 save_prompt 建好。",
+            "parameters": {"type": "object", "properties": {
+                "name": {"type": "string", "description": "预设名标识"},
+                "main": {"type": "string", "description": "main 提示词文件名，默认 default"},
+                "style": {"type": "string", "description": "style 提示词文件名，默认 default"},
+                "post": {"type": "string", "description": "post 提示词文件名，默认 default"}},
+                "required": ["name"]}}},
+        {"type": "function", "function": {
+            "name": "bind_preset",
+            "description": "把某个预设绑定到目标会话，使其 main/style/post 一起生效。",
+            "parameters": {"type": "object", "properties": dict(target, **{
+                "name": {"type": "string", "description": "预设名"}}),
+                "required": ["target_session_id", "name"]}}},
+    ]
+
+
+def _list_targets():
+    """枚举可配置会话（排除助手自身），供 list_targets 工具用。"""
+    out = []
+    for d in SESSIONS_DIR.iterdir():
+        if not d.is_dir():
+            continue
+        s = get_session(d.name)
+        if s.active_prompts.get("character") == ASSISTANT_CHAR_KEY:
+            continue
+        char = s.active_prompts.get("character", "default")
+        name = char
+        cfile = PROMPTS_DIR / "character" / f"{_safe_name(char)}.json"
+        if cfile.exists():
+            try:
+                name = json.loads(cfile.read_text(encoding="utf-8")).get("name", char)
+            except Exception:
+                pass
+        out.append({"session_id": d.name, "character": char, "character_name": name})
+    return out
+
+
+PROTECTED_PROMPT_NAMES = {"default", ASSISTANT_CHAR_KEY}
+
+
+def _read_target_session(args):
+    """从工具参数取 target_session_id，做路径安全过滤，返回 (sid, scope) 或抛 ValueError。"""
+    sid = "".join(c for c in (args.get("target_session_id") or "") if c.isalnum() or c in "-_")
+    if not sid:
+        raise ValueError("缺少 target_session_id，请先调用 list_targets 选定要配置的会话")
+    return sid, f"sess:{sid}"
+
+
+def _exec_assistant_tool(name, args):
+    """工具派发。返回 JSON 可序列化 dict。= 硬边界（只动数据层提示词/预设/世界书）。"""
+    try:
+        if name == "list_targets":
+            return {"targets": _list_targets()}
+
+        # ---------- 世界书 ----------
+        if name == "list_lore":
+            _, scope = _read_target_session(args)
+            return {"entries": memory_store.list_lore(scope)}
+        if name == "add_lore":
+            _, scope = _read_target_session(args)
+            if not (args.get("title") and args.get("content")):
+                return {"error": "title 和 content 必填"}
+            rid = memory_store.add_lore(scope, args["title"], args["content"],
+                    keys=args.get("keys") or [], priority=args.get("priority", 0),
+                    always_on=bool(args.get("always_on")))
+            return {"ok": True, "id": rid}
+        if name == "update_lore":
+            _, scope = _read_target_session(args)
+            if not args.get("id"):
+                return {"error": "id 必填"}
+            ok = memory_store.update_lore(args["id"], title=args.get("title"),
+                    content=args.get("content"), keys=args.get("keys"),
+                    priority=args.get("priority"), always_on=args.get("always_on"))
+            return {"ok": ok}
+        if name == "delete_lore":
+            _read_target_session(args)
+            if not args.get("id"):
+                return {"error": "id 必填"}
+            return {"ok": memory_store.delete_lore(args["id"])}
+
+        # ---------- 提示词文件 ----------
+        if name == "list_prompts":
+            cat = args.get("category")
+            if cat not in PROMPT_CATEGORIES:
+                return {"error": f"category 须为 {PROMPT_CATEGORIES} 之一"}
+            out = []
+            cdir = PROMPTS_DIR / cat
+            if cdir.exists():
+                for f in sorted(cdir.glob("*.json")):
+                    disp = f.stem
+                    try:
+                        disp = json.loads(f.read_text(encoding="utf-8")).get("name", f.stem)
+                    except Exception:
+                        pass
+                    out.append({"name": f.stem, "display_name": disp})
+            return {"prompts": out}
+        if name == "get_prompt":
+            cat, nm = args.get("category"), _safe_name(args.get("name"))
+            if cat not in PROMPT_CATEGORIES or not nm:
+                return {"error": "category/name 不合法"}
+            fpath = PROMPTS_DIR / cat / f"{nm}.json"
+            if not fpath.exists():
+                return {"error": "文件不存在"}
+            d = json.loads(fpath.read_text(encoding="utf-8"))
+            return {"name": nm, "display_name": d.get("name", nm), "content": d.get("content", "")}
+        if name == "save_prompt":
+            cat, nm = args.get("category"), _safe_name(args.get("name"))
+            if cat not in PROMPT_CATEGORIES or not nm:
+                return {"error": "category/name 不合法"}
+            if nm in PROTECTED_PROMPT_NAMES:
+                return {"error": f"{nm} 是保留项，不能覆盖；换个名字"}
+            file_data = {"name": args.get("display_name") or nm, "content": args.get("content", "")}
+            if cat == "character":
+                file_data["avatar"] = args.get("avatar", "")
+            (PROMPTS_DIR / cat).mkdir(parents=True, exist_ok=True)
+            (PROMPTS_DIR / cat / f"{nm}.json").write_text(
+                json.dumps(file_data, ensure_ascii=False, indent=2), encoding="utf-8")
+            return {"ok": True, "name": nm}
+        if name == "bind_prompt":
+            sid, _ = _read_target_session(args)
+            cat, nm = args.get("category"), _safe_name(args.get("name"))
+            if cat not in ("character", "world", "user") or not nm:
+                return {"error": "category 须为 character/world/user，name 必填"}
+            if not (PROMPTS_DIR / cat / f"{nm}.json").exists():
+                return {"error": f"{cat}/{nm} 不存在，先 save_prompt"}
+            tgt = get_session(sid)
+            with tgt.lock:
+                tgt.active_prompts[cat] = nm
+            tgt.save_active_prompts()
+            return {"ok": True}
+
+        # ---------- 预设 ----------
+        if name == "list_presets":
+            out = []
+            if PRESETS_DIR.exists():
+                for f in sorted(PRESETS_DIR.glob("*.json")):
+                    try:
+                        out.append({"name": f.stem, **json.loads(f.read_text(encoding="utf-8"))})
+                    except Exception:
+                        out.append({"name": f.stem})
+            return {"presets": out}
+        if name == "get_preset":
+            nm = _safe_name(args.get("name"))
+            fpath = PRESETS_DIR / f"{nm}.json"
+            if not nm or not fpath.exists():
+                return {"error": "预设不存在"}
+            return {"name": nm, **json.loads(fpath.read_text(encoding="utf-8"))}
+        if name == "save_preset":
+            nm = _safe_name(args.get("name"))
+            if not nm:
+                return {"error": "name 必填"}
+            if nm in PROTECTED_PROMPT_NAMES:
+                return {"error": f"{nm} 是保留项，换个名字"}
+            preset = {k: _safe_name(args.get(k)) or "default" for k in PRESET_CATEGORIES}
+            PRESETS_DIR.mkdir(parents=True, exist_ok=True)
+            (PRESETS_DIR / f"{nm}.json").write_text(
+                json.dumps(preset, ensure_ascii=False, indent=2), encoding="utf-8")
+            return {"ok": True, "name": nm, "preset": preset}
+        if name == "bind_preset":
+            sid, _ = _read_target_session(args)
+            nm = _safe_name(args.get("name"))
+            if not nm or not (PRESETS_DIR / f"{nm}.json").exists():
+                return {"error": f"预设 {nm} 不存在，先 save_preset"}
+            tgt = get_session(sid)
+            with tgt.lock:
+                tgt.active_prompts["preset"] = nm
+            tgt.save_active_prompts()
+            return {"ok": True}
+
+        return {"error": f"未知工具: {name}"}
+    except ValueError as e:
+        return {"error": str(e)}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def call_assistant_api(session_id):
+    """设定助手专用：原生 tool_calls 多轮循环。不走 RP 三明治、不触发记忆总结。"""
+    session = get_session(session_id)
+    _load_config()
+    api_cfg = config.get("api", {})
+
+    with session.lock:
+        session.is_typing = True
+        session.typing_ts = time.time()
+        session.pending_event.set()
+        recent = list(session.messages[-40:])
+
+    sys_prompt = BUILTIN_ASSISTANT_PROMPT
+    targets = _list_targets()
+    if targets:
+        hint = "；".join(f"{t['session_id']}→{t['character_name']}" for t in targets[:10])
+        sys_prompt += f"\n\n[当前可配置的会话] {hint}"
+
+    msgs = [{"role": "system", "content": sys_prompt}]
+    for m in recent:
+        role = m.get("role")
+        if role in ("user", "assistant"):
+            msgs.append({"role": role, "content": m.get("text", "")})
+
+    tools = _assistant_tool_defs()
+    url = f"{api_cfg.get('base_url', '').rstrip('/')}/chat/completions"
+    headers = {"Content-Type": "application/json",
+               "Authorization": f"Bearer {api_cfg.get('api_key')}"}
+    final_text = ""
+    try:
+        for rnd in range(ASSISTANT_MAX_ROUNDS):
+            payload = {"model": api_cfg.get("model", "deepseek-chat"), "messages": msgs,
+                       "tools": tools, "tool_choice": "auto", "temperature": 0.3}
+            req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers)
+            with urllib.request.urlopen(req, timeout=90) as resp:
+                res = json.loads(resp.read().decode("utf-8"))
+            choice = res["choices"][0]["message"]
+            tcs = choice.get("tool_calls") or []
+            if not tcs:
+                final_text = (choice.get("content") or "").strip()
+                break
+            # 必须把带 tool_calls 的 assistant 消息回放进上下文，再追加每个 tool 结果
+            msgs.append({"role": "assistant", "content": choice.get("content") or "", "tool_calls": tcs})
+            for tc in tcs:
+                fn = tc.get("function", {}) or {}
+                try:
+                    a = json.loads(fn.get("arguments") or "{}")
+                except Exception:
+                    a = {}
+                result = _exec_assistant_tool(fn.get("name", ""), a)
+                msgs.append({"role": "tool", "tool_call_id": tc.get("id"),
+                             "content": json.dumps(result, ensure_ascii=False)})
+            log_print(f"🛠️ [设定助手][{session_id}] 第{rnd+1}轮：执行 {len(tcs)} 个工具 "
+                      f"({', '.join((t.get('function') or {}).get('name','?') for t in tcs)})")
+        else:
+            final_text = f"（工具调用到了 {ASSISTANT_MAX_ROUNDS} 轮上限，先停一下。把需求说得更具体我再继续。）"
+        if not final_text:
+            final_text = "（工具执行完了，但模型没有给出文字回复。）"
+    except Exception as e:
+        final_text = f"⚠️ 系统提示：{e}"
+        log_print(f"[设定助手] 错误: {e}")
+
+    with session.lock:
+        session.messages.append({"role": "assistant", "text": final_text,
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), **_scene_stamp(session)})
+        session.is_typing = False
+        session.pending_event.clear()
+    session.save_messages_async()
+
+
+# ================= 主动联系调度：触发与生成 =================
+def _get_last_user_ts(session_id):
+    """该会话最后一条用户消息的 epoch 秒（供 idle 任务判断空闲）。无则 None。"""
+    try:
+        s = get_session(session_id)
+        with s.lock:
+            msgs = list(s.messages)
+        for m in reversed(msgs):
+            if m.get("role") == "user" and m.get("ts"):
+                try:
+                    return time.mktime(time.strptime(m["ts"], "%Y-%m-%dT%H:%M:%S"))
+                except Exception:
+                    return None
+    except Exception:
+        return None
+    return None
+
+
+def _generate_proactive_message(session, intention):
+    """api 模式唤醒：用角色人设+记忆当场生成一条主动消息正文。失败返回空串。"""
+    _load_config()
+    api_cfg = config.get("api", {})
+    char_name = _get_display_name("character", session.active_prompts.get("character"), "AI助手")
+    user_name = _get_display_name("user", session.active_prompts.get("user"), "用户")
+    header_prompt = _apply_macros(build_header_prompt(session), char_name, user_name)
+    memory_str = _apply_macros(build_injected_memory(session, intention or ""), char_name, user_name)
+    tail_anchor = _apply_macros(build_tail_anchor(session, memory_str), char_name, user_name)
+
+    with session.lock:
+        recent = list(session.messages[-(_memory_cfg().get("recent_rounds", 10) * 2):])
+    api_messages = [{"role": "system", "content": header_prompt}]
+    for m in recent:
+        if m.get("role") in ("user", "assistant"):
+            api_messages.append({"role": m["role"], "content": m.get("text", "")})
+    directive = (f"（系统提示：现在是你主动联系{user_name}的时机，对方此刻不在对话里。"
+                 f"你之前记下的心意/事由：{intention or '想找对方说说话'}。"
+                 f"请以{char_name}的身份，主动给{user_name}发一条自然、简短、贴合当前关系与场景的消息；"
+                 f"直接说正文，不要解释这是主动消息，不要寒暄式复述。）" + (tail_anchor or ""))
+    api_messages.append({"role": "user", "content": directive})
+
+    url = f"{api_cfg.get('base_url', '').rstrip('/')}/chat/completions"
+    payload = {"model": api_cfg.get("model", "deepseek-chat"), "messages": api_messages, "temperature": 0.8}
+    try:
+        req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_cfg.get('api_key')}"})
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            res = json.loads(resp.read().decode("utf-8"))
+        raw = res["choices"][0]["message"]["content"].strip()
+        _content, _ = ingest_reply(session, raw)
+        return _content
+    except Exception as e:
+        log_print(f"🔔 [主动消息生成失败] {e}")
+        return ""
+
+
+def _detect_lan_ip():
+    """可靠地拿到本机 LAN IP：用 UDP 连一下外网地址读本地 sockname（不真正发包）。
+    比 gethostbyname(gethostname()) 稳，后者常返回 127.0.x.x。"""
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        if ip and not ip.startswith("127."):
+            return ip
+    except Exception:
+        pass
+    try:
+        return socket.gethostbyname(socket.gethostname())
+    except Exception:
+        return "127.0.0.1"
+
+
+def _resolved_notify_cfg():
+    """返回 notify 配置；若 bark.icon 是相对路径（/icons/x.png），补成绝对 URL。
+    base 优先用 config.notify.icon_base（可填 https 隧道地址），否则用运行时探测的 LAN_BASE。"""
+    import copy
+    cfg = copy.deepcopy(config.get("notify") or {})
+    base = (cfg.get("icon_base") or "").strip().rstrip("/") or LAN_BASE
+    b = cfg.get("bark") or {}
+    icon = (b.get("icon") or "").strip()
+    if icon.startswith("/") and base:
+        b["icon"] = base + icon
+        cfg["bark"] = b
+    return cfg
+
+
+def _push_notify(title, body):
+    """统一推送入口：解析图标 URL 后发推。返回 (ok, detail)。"""
+    return notify.send_notification(_resolved_notify_cfg(), title, body)
+
+
+def _fire_outreach(job):
+    """调度线程回调：一个到点任务的处理。push=直接推固定文案；wake=唤醒角色组织内容。"""
+    sid = job.get("session_id")
+    session = get_session(sid)
+    char_name = _get_display_name("character", session.active_prompts.get("character"), "AI助手")
+    mode = job.get("mode")
+    text = ""
+
+    if mode == "push":
+        text = (job.get("content") or "").strip() or f"{char_name}想起了你。"
+    else:  # wake
+        if config.get("mode") == "api":
+            text = _generate_proactive_message(session, job.get("intention"))
+        else:
+            # claude_mode：把主动请求挂到会话上，由 wait_pending 循环唤醒角色（我）来组织内容
+            with session.lock:
+                session.proactive_request = job.get("intention") or "想找对方说说话"
+                session.pending_event.set()
+            global_pending_event.set()
+            log_print(f"🔔 [主动·claude_mode] 已唤醒会话 {sid} 让角色组织内容")
+            return  # 内容由 claude 回复链路落库+推送，这里不重复
+
+    if not text:
+        return
+    p_msg = {"role": "assistant", "text": text, "proactive": True,
+             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), **_scene_stamp(session)}
+    with session.lock:
+        session.messages.append(p_msg)
+        session.is_typing = False
+        session.pending_event.clear()
+    session.save_messages_async()
+    ok, detail = _push_notify(char_name, text)
+    log_print(f"🔔 [主动消息→{sid}] 已落库；推送 ok={ok} ({detail})")
+
+
+# ----- RP 角色自助排程（agentic）：聊天里角色可给自己排「之后主动找用户」-----
+def _outreach_enabled():
+    return (config.get("outreach") or {}).get("enabled", True)
+
+
+def _outreach_tool_defs():
+    return [
+        {"type": "function", "function": {
+            "name": "schedule_outreach",
+            "description": ("当你（角色）产生了'之后想主动联系用户'的意愿时，用它给自己排一个提醒。"
+                            "到点后系统会推送到用户手机。只在确有此意愿时调用，别滥用。"),
+            "parameters": {"type": "object", "properties": {
+                "kind": {"type": "string", "enum": ["once", "daily", "interval", "idle"],
+                         "description": "once=某时刻一次 / daily=每天定点 / interval=每隔一段 / idle=用户久未说话时"},
+                "when": {"type": "string", "description": (
+                    "触发时机：once 用 'YYYY-MM-DD HH:MM' 或相对量 '+30m'/'+2h'/'+1d'；"
+                    "daily 用 'HH:MM'；interval/idle 用分钟数（如 '180' 表示 3 小时）")},
+                "mode": {"type": "string", "enum": ["wake", "push"],
+                         "description": "wake=到点唤醒你当场组织内容(推荐) / push=直接推固定文案 content"},
+                "intention": {"type": "string", "description": "wake 模式：你想说的事由/心情，到点据此生成消息"},
+                "content": {"type": "string", "description": "push 模式：到点直接推送的固定文案"}},
+                "required": ["kind", "when", "mode"]}}},
+        {"type": "function", "function": {
+            "name": "list_my_outreach",
+            "description": "查看你给本会话排过的主动联系任务。",
+            "parameters": {"type": "object", "properties": {}}}},
+        {"type": "function", "function": {
+            "name": "cancel_outreach",
+            "description": "按 id 取消一个主动联系任务。",
+            "parameters": {"type": "object", "properties": {
+                "id": {"type": "integer"}}, "required": ["id"]}}},
+    ]
+
+
+def _parse_when(kind, when):
+    now = time.time()
+    w = str(when or "").strip()
+    if kind == "daily":
+        return w  # "HH:MM"
+    if kind in ("interval", "idle"):
+        try:
+            return str(float(w) * 60)  # 分钟 → 秒
+        except ValueError:
+            return str(3600)
+    # once
+    if w.startswith("+") and len(w) >= 2 and w[-1] in "mhd":
+        try:
+            num = float(w[1:-1])
+            return str(now + num * {"m": 60, "h": 3600, "d": 86400}[w[-1]])
+        except ValueError:
+            return str(now + 3600)
+    try:
+        return str(time.mktime(time.strptime(w, "%Y-%m-%d %H:%M")))
+    except Exception:
+        return str(now + 3600)
+
+
+def _exec_outreach_tool(name, args, session_id):
+    """RP 角色工具派发。硬边界：只能给本会话排/查/删主动联系任务，碰不到别的。"""
+    try:
+        if name == "schedule_outreach":
+            kind, mode = args.get("kind"), args.get("mode", "wake")
+            if kind not in scheduler.KINDS:
+                return {"error": f"kind 须为 {scheduler.KINDS}"}
+            if mode not in scheduler.MODES:
+                return {"error": f"mode 须为 {scheduler.MODES}"}
+            when_spec = _parse_when(kind, args.get("when"))
+            job = scheduler.add_job(session_id, kind, when_spec, mode,
+                    content=args.get("content", ""), intention=args.get("intention", ""))
+            return {"ok": True, "id": job["id"], "next_run": job["next_run"]}
+        if name == "list_my_outreach":
+            return {"jobs": scheduler.list_jobs(session_id)}
+        if name == "cancel_outreach":
+            if not args.get("id"):
+                return {"error": "id 必填"}
+            return {"ok": scheduler.delete_job(args["id"])}
+        return {"error": f"未知工具: {name}"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def call_llm_api(session_id):
     session = get_session(session_id)
     _load_config()
+    # 设定助手走原生 tool calling 通道，不走下面的 RP 三明治
+    if session.active_prompts.get("character") == ASSISTANT_CHAR_KEY:
+        return call_assistant_api(session_id)
     api_cfg = config.get("api", {})
 
     with session.lock:
@@ -775,15 +1578,19 @@ def call_llm_api(session_id):
         current_msg_len = len(session.messages)
         last_user_text = next(
             (m.get("text", "") for m in reversed(session.messages) if m.get("role") == "user"), "")
+            
+        # === 新增：获取真实的名称 ===
+        char_name = _get_display_name("character", session.active_prompts.get("character"), "AI助手")
+        user_name = _get_display_name("user", session.active_prompts.get("user"), "用户")
 
-    # 1. 顶部静态人设 (退出 with 锁缩进，回到 4 空格)
-    header_prompt = build_header_prompt(session)
+    # 1. 顶部静态人设 (带宏替换)
+    header_prompt = _apply_macros(build_header_prompt(session), char_name, user_name)
 
-    # 2. 锁外检索动态记忆
-    memory_str = build_injected_memory(session, last_user_text)
+    # 2. 锁外检索动态记忆 (带宏替换)
+    memory_str = _apply_macros(build_injected_memory(session, last_user_text), char_name, user_name)
 
-    # 3. 生成尾部锚定块
-    tail_anchor = build_tail_anchor(session, memory_str)
+    # 3. 生成尾部锚定块 (带宏替换)
+    tail_anchor = _apply_macros(build_tail_anchor(session, memory_str), char_name, user_name)
 
     # 4. 极其优雅地拼装三明治上下文
     api_messages = [{"role": "system", "content": header_prompt}]
@@ -793,9 +1600,12 @@ def call_llm_api(session_id):
         role = m["role"]
         raw_text = m.get("text", "")
 
+        # === 新增：在对话正文前加上说话人名字 ===
+        # prefix = f"{user_name}: " if role == "user" else f"{char_name}: "
+
         if m.get("image"):
             content_nodes = [
-                {"type": "text", "text": raw_text or "请看这张图片。"},
+                {"type": "text", "text": (raw_text or "请看这张图片。")},
                 {"type": "image_url", "image_url": {"url": m["image"]}}
             ]
             if is_last_msg and tail_anchor:
@@ -832,34 +1642,63 @@ def call_llm_api(session_id):
         log_print(f"   ├─ 记忆块: 实时注入了 {mem_lines_count} 行长时上下文")
     log_print(f"   └─ User  : {last_u_preview}...")
 
+    # agentic：开启后给角色挂上「自助排程」工具（tool_choice=auto，平时不调用、零影响）
+    if _outreach_enabled():
+        payload["tools"] = _outreach_tool_defs()
+        payload["tool_choice"] = "auto"
+
+    def _post(pl):
+        rq = urllib.request.Request(
+            url, data=json.dumps(pl).encode('utf-8'),
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_cfg.get('api_key')}"})
+        with urllib.request.urlopen(rq, timeout=90) as response:
+            return json.loads(response.read().decode('utf-8'))
+
     try:
-        req = urllib.request.Request(
-            url, data=json.dumps(payload).encode('utf-8'),
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_cfg.get('api_key')}"}
-        )
-        with urllib.request.urlopen(req, timeout=90) as response:
-            res_data = json.loads(response.read().decode('utf-8'))
-            raw_reply = res_data['choices'][0]['message']['content'].strip()
-            # 解析信封：推进场景闩锁，只把干净 <content> 落库/发前端
-            reply_text = ingest_reply(session, raw_reply)
+        raw_reply = ""
+        for _round in range(5):
+            res_data = _post(payload)
+            choice = res_data['choices'][0]['message']
+            tcs = choice.get('tool_calls') or []
+            if not tcs:
+                raw_reply = (choice.get('content') or '').strip()
+                break
+            # 角色调了排程工具：执行，并把 assistant(tool_calls)+tool 结果回放进上下文再续一轮
+            api_messages.append({"role": "assistant", "content": choice.get('content') or "", "tool_calls": tcs})
+            for tc in tcs:
+                fn = tc.get('function', {}) or {}
+                try:
+                    a = json.loads(fn.get('arguments') or '{}')
+                except Exception:
+                    a = {}
+                r = _exec_outreach_tool(fn.get('name', ''), a, session_id)
+                api_messages.append({"role": "tool", "tool_call_id": tc.get('id'),
+                                     "content": json.dumps(r, ensure_ascii=False)})
+            log_print(f"🛠️ [角色排程][{session_id}] 执行 {len(tcs)} 个工具")
 
-            with session.lock:
-                session.messages.append({
-                    "role": "assistant",
-                    "text": reply_text,
-                    "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                    **_scene_stamp(session),
-                })
-                session.is_typing = False
-                session.pending_event.clear()
-            session.save_messages_async()
-            log_print(f"\n{'='*15} 🤖 [AI 回复 -> Session: {session_id}] {'='*15}")
-            log_print(raw_reply)
-            log_print(f"{'='*55}\n")
+        # 解析信封：推进场景闩锁，只把干净 <content> 落库/发前端
+        reply_text, _meta = ingest_reply(session, raw_reply)
 
-            if _needs_summary(session):
-                log_print(f"🧠 [记忆触发] 增量总结 -> Session: {session_id}")
-                threading.Thread(target=summarize_session, args=(session,)).start()
+        a_msg = {
+            "role": "assistant",
+            "text": reply_text,
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            **_scene_stamp(session),
+        }
+        if _meta.get("emotion"):    a_msg["emotion"] = _meta["emotion"]
+        if _meta.get("voice_text"): a_msg["voice_text"] = _meta["voice_text"]
+        with session.lock:
+            session.messages.append(a_msg)
+            session.is_typing = False
+            session.pending_event.clear()
+        session.save_messages_async()
+        log_print(f"\n{'='*15} 🤖 [AI 回复 -> Session: {session_id}] {'='*15}")
+        log_print(raw_reply)
+        log_print(f"{'='*55}\n")
+
+        if _needs_summary(session):
+            log_print(f"🧠 [记忆触发] 增量总结 -> Session: {session_id}")
+            threading.Thread(target=summarize_session, args=(session,)).start()
 
     except Exception as e:
         log_print(f"[API] 发生错误: {e}")
@@ -886,6 +1725,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         "/api/presets/save", "/api/presets/delete",
         "/api/toggle_mode",
         "/api/config/save", "/api/test_models", # ⭐️ 新增：保存配置与拉取模型的路由
+        "/api/notify/test",
+        "/api/tts/option",  # 语音小开关（skip_narration 等），无会话副作用
     }
     NO_SESSION_GET_PATHS = {
         "/api/sessions/list", "/api/presets/list", "/api/presets/get",
@@ -1015,20 +1856,78 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         elif path == "/api/reply":
             length = int(self.headers.get("Content-Length", 0))
             body = _safe_decode(self.rfile.read(length))
-            reply_txt = json.loads(body).get("text", "").strip() if "{" in body else body
+            _rbody = json.loads(body) if "{" in body else {"text": body}
+            reply_txt = (_rbody.get("text", "") or "").strip()
+            is_proactive = bool(_rbody.get("proactive"))
             # claude_mode 回复同样走信封解析：推进场景闩锁，只落干净正文
-            reply_txt = ingest_reply(session, reply_txt)
+            reply_txt, _meta = ingest_reply(session, reply_txt)
+            msg = {"role": "assistant", "text": reply_txt,
+                   "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), **_scene_stamp(session)}
+            if is_proactive:
+                msg["proactive"] = True
+            if _meta.get("emotion"):    msg["emotion"] = _meta["emotion"]
+            if _meta.get("voice_text"): msg["voice_text"] = _meta["voice_text"]
             with session.lock:
-                session.messages.append({"role": "assistant", "text": reply_txt,
-                                         "ts": time.strftime("%Y-%m-%dT%H:%M:%S"), **_scene_stamp(session)})
+                session.messages.append(msg)
                 # 👇 修复：外部写入消息后，必须解除打字状态并清空等待事件
                 session.is_typing = False
                 session.pending_event.clear()
             session.save_messages_async()
+            # 主动消息（调度唤醒角色组织的）→ 推送到手机
+            if is_proactive:
+                char_name = _get_display_name("character", session.active_prompts.get("character"), "AI助手")
+                ok, detail = _push_notify(char_name, reply_txt)
+                log_print(f"🔔 [主动·claude_mode→{session.session_id}] 推送 ok={ok} ({detail})")
             # claude_mode 的回复不走 call_llm_api，总结触发器需在此补上
             if _needs_summary(session):
                 threading.Thread(target=summarize_session, args=(session,)).start()
             self._json({"ok": True})
+
+        elif path == "/api/tts":
+            # 按需语音合成：前端点了播放 / 自动读开着时才调到这里，只为真听的句子付费
+            length = int(self.headers.get("Content-Length", 0))
+            try:
+                data = json.loads(_safe_decode(self.rfile.read(length)))
+            except Exception:
+                data = {}
+            if not _tts_cfg().get("enabled"):
+                self._json({"ok": False, "error": "tts_disabled"})
+                return
+            # 音色优先级：试听传入的 voice（整体覆盖）> 当前会话角色的 voice > 全局 config.tts
+            voice_override = data.get("voice")
+            if isinstance(voice_override, dict) and voice_override:
+                override = dict(voice_override)              # 试听：整体覆盖
+            else:
+                char_name = session.active_prompts.get("character") if session else None
+                override = dict(_character_voice(char_name)) if char_name else {}
+                em = data.get("emotion")                     # 该条消息的情绪叠加到角色音色上
+                if em:
+                    override["emotion"] = em
+            audio_url = synth_tts(data.get("text", ""), override=override)
+            if audio_url:
+                self._json({"ok": True, "audio": audio_url})
+            else:
+                self._json({"ok": False, "error": "synth_failed"})
+            return
+
+        elif path == "/api/tts/option":
+            # 语音布尔小开关（前端一键切换 skip_narration / autoplay / enabled），单键合并保存
+            length = int(self.headers.get("Content-Length", 0))
+            try:
+                data = json.loads(_safe_decode(self.rfile.read(length)))
+            except Exception:
+                data = {}
+            key = data.get("key")
+            if key not in ("enabled", "skip_narration", "autoplay"):
+                self._json({"ok": False, "error": "bad_key"})
+                return
+            with config_lock:
+                config.setdefault("tts", {})
+                config["tts"][key] = bool(data.get("value"))
+                val = config["tts"][key]
+            _save_config()
+            self._json({"ok": True, "key": key, "value": val})
+            return
 
         elif path == "/api/done":
             with session.lock: session.pending_event.clear()
@@ -1099,9 +1998,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             content = data.get("content", "")
             if cat in PROMPT_CATEGORIES and name:
                 file_data = {"name": display_name, "content": content}
+                fpath = PROMPTS_DIR / cat / f"{name}.json"
                 if cat == "character":
                     file_data["avatar"] = data.get("avatar", "")
-                fpath = PROMPTS_DIR / cat / f"{name}.json"
+                    if isinstance(data.get("voice"), dict):
+                        file_data["voice"] = data.get("voice")
+                    elif fpath.exists():
+                        # 未传 voice（如克隆/旧前端）时保留原有音色，避免被覆盖丢失
+                        try:
+                            old = json.loads(fpath.read_text(encoding="utf-8"))
+                            if isinstance(old.get("voice"), dict):
+                                file_data["voice"] = old["voice"]
+                        except Exception:
+                            pass
                 fpath.write_text(json.dumps(file_data, ensure_ascii=False, indent=2), encoding="utf-8")
                 self._json({"ok": True})
             else:
@@ -1311,6 +2220,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self._json({"ok": False, "error": str(e)})
             return
 
+        elif path == "/api/notify/test":
+            # 单独跑通推送通道用：往配置的通道发一条测试通知，把成败原样回报前端
+            _load_config()
+            ok, detail = _push_notify("Chat Bridge 测试推送",
+                "如果你在手机上看到这条，推送通道就通了 ✅")
+            icon_url = ((_resolved_notify_cfg().get("bark") or {}).get("icon") or "(无)")
+            log_print(f"🔔 [推送测试] ok={ok} detail={detail}")
+            log_print(f"🔔 [推送测试] 图标URL={icon_url} —— 用手机浏览器打开它，能看到图才说明手机够得到")
+            self._json({"ok": ok, "detail": detail, "icon": icon_url})
+
         elif path == "/api/memory/summarize":
             threading.Thread(target=summarize_session, args=(session,), kwargs={"full": True}).start()
             self._json({"ok": True})
@@ -1327,7 +2246,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         importance=data.get("importance"), embedding=emb)
             elif table == "facts":
                 ok = memory_store.update_fact(rid, subject=data.get("subject"),
-                        predicate=data.get("predicate"), obj=data.get("object"))
+                        predicate=data.get("predicate"), obj=data.get("object"),
+                        is_state=data.get("is_state"))
             elif table == "summaries" and data.get("key"):
                 memory_store.upsert_summary(data["key"], data.get("text", "")); ok = True
             self._json({"ok": ok})
@@ -1340,6 +2260,67 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self._json({"ok": False, "error": "invalid table"})
             else:
                 self._json({"ok": memory_store.forget(table, rid)})
+
+        elif path == "/api/lore":
+            # 新建世界书条目
+            length = int(self.headers.get("Content-Length", 0))
+            data = json.loads(_safe_decode(self.rfile.read(length)))
+            title = (data.get("title") or "").strip()
+            content = (data.get("content") or "").strip()
+            if not title or not content:
+                self._json({"ok": False, "error": "title/content 必填"})
+            else:
+                rid = memory_store.add_lore(
+                    _session_scope(session), title, content,
+                    keys=data.get("keys") or [],
+                    priority=data.get("priority", 0),
+                    always_on=bool(data.get("always_on")))
+                self._json({"ok": True, "id": rid})
+
+        elif path == "/api/lore/update":
+            length = int(self.headers.get("Content-Length", 0))
+            data = json.loads(_safe_decode(self.rfile.read(length)))
+            rid = data.get("id")
+            if not rid:
+                self._json({"ok": False, "error": "id 必填"})
+            else:
+                ok = memory_store.update_lore(
+                    rid, title=data.get("title"), content=data.get("content"),
+                    keys=data.get("keys"), priority=data.get("priority"),
+                    always_on=data.get("always_on"))
+                self._json({"ok": ok})
+
+        elif path == "/api/lore/delete":
+            length = int(self.headers.get("Content-Length", 0))
+            data = json.loads(_safe_decode(self.rfile.read(length)))
+            rid = data.get("id")
+            self._json({"ok": memory_store.delete_lore(rid) if rid else False})
+
+        elif path == "/api/outreach":
+            # 手动新建一个主动联系任务（前端面板用；与角色自助排程同一套底层）
+            length = int(self.headers.get("Content-Length", 0))
+            data = json.loads(_safe_decode(self.rfile.read(length)))
+            kind = data.get("kind")
+            mode = data.get("mode", "wake")
+            if kind not in scheduler.KINDS or mode not in scheduler.MODES:
+                self._json({"ok": False, "error": "kind/mode 不合法"})
+            else:
+                when_spec = _parse_when(kind, data.get("when"))
+                job = scheduler.add_job(session.session_id, kind, when_spec, mode,
+                        content=data.get("content", ""), intention=data.get("intention", ""))
+                self._json({"ok": True, "job": job})
+
+        elif path == "/api/outreach/delete":
+            length = int(self.headers.get("Content-Length", 0))
+            data = json.loads(_safe_decode(self.rfile.read(length)))
+            rid = data.get("id")
+            self._json({"ok": scheduler.delete_job(rid) if rid else False})
+
+        elif path == "/api/outreach/toggle":
+            length = int(self.headers.get("Content-Length", 0))
+            data = json.loads(_safe_decode(self.rfile.read(length)))
+            rid = data.get("id")
+            self._json({"ok": scheduler.set_enabled(rid, bool(data.get("enabled"))) if rid else False})
 
         else:
             self._json({"ok": False, "error": "not found"}, 404)
@@ -1490,11 +2471,25 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 found = _find_pending_session()
             if found:
                 with found.lock:
-                    self._json({"pending": True, "text": found.pending_text,
-                                "session_id": found.session_id,
-                                "scene": {"scene_id": found.current_scene_id,
-                                          "time": found.current_time,
-                                          "place": found.current_place}})
+                    pro = getattr(found, "proactive_request", None)
+                    if pro:
+                        # 调度唤醒：不是用户发来的消息，而是请角色主动组织一条消息
+                        found.proactive_request = None  # 消费一次
+                        text = (f"（系统·主动联系时机：现在请你以角色身份主动给用户发一条消息，"
+                                f"对方此刻不在对话里。事由/心情：{pro}。直接说正文，自然简短，"
+                                f"贴合当前关系与场景，不要解释这是主动消息。回复请照常用 <msg> 信封，"
+                                f"并在 /api/reply 时附带 proactive:true。）")
+                        self._json({"pending": True, "text": text, "proactive": True,
+                                    "session_id": found.session_id,
+                                    "scene": {"scene_id": found.current_scene_id,
+                                              "time": found.current_time,
+                                              "place": found.current_place}})
+                    else:
+                        self._json({"pending": True, "text": found.pending_text,
+                                    "session_id": found.session_id,
+                                    "scene": {"scene_id": found.current_scene_id,
+                                              "time": found.current_time,
+                                              "place": found.current_place}})
             else:
                 self._json({"pending": False})
             return
@@ -1532,6 +2527,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if path == "/api/memory/context":
             q = query.get("q", [""])[0]
             self._json({"context": build_injected_memory(session, q)})
+            return
+
+        if path == "/api/lore":
+            # 列出当前会话作用域下的全部世界书条目
+            self._json({"lore": memory_store.list_lore(_session_scope(session))})
+            return
+
+        if path == "/api/outreach":
+            # 列出当前会话的主动联系任务
+            self._json({"jobs": scheduler.list_jobs(session.session_id)})
             return
 
         if path == "/api/memory/search":
@@ -1606,9 +2611,15 @@ if __name__ == "__main__":
     _init_dirs()
     _load_config()
     memory_store.init_db(str(MEMORY_DB))
+    scheduler.init_db(str(JOBS_DB))
     _migrate_legacy_memory()
-    import socket
-    local_ip = socket.gethostbyname(socket.gethostname())
+    # 主动联系调度线程：每 60s 扫一次到点任务，触发 _fire_outreach
+    threading.Thread(target=scheduler.run_loop,
+                     kwargs={"on_fire": _fire_outreach, "get_last_user_ts": _get_last_user_ts, "interval": 60},
+                     daemon=True).start()
+    log_print("⏰ [调度] 主动联系调度线程已启动（60s 轮询）")
+    local_ip = _detect_lan_ip()
+    LAN_BASE = f"http://{local_ip}:{PORT}"  # 推送图标相对路径据此补成绝对 URL
 
     print(f"\n" + "="*50)
     print(f" 🚀 Chat Server (Multi-Session & Modular Prompt)")

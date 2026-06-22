@@ -22,6 +22,24 @@
       // 暴露给外层作用域的 doSubmit：发消息时把当前绑定随 config 一起送出
       window.getSessionBinding = () => sessionBinding;
 
+      // ================= 动态默认头像生成器（纯SVG数据流，零图片） =================
+      function getFallbackAvatar(name) {
+        const str = String(name || '未命名').trim();
+        const char = (str ? str.charAt(0) : '—').toUpperCase();
+        
+        // 真正的字符串 Hash 算法，确保就算名字只差一个字，颜色也会被瞬间甩到色相环的另一边
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+          hash = str.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        const hue = Math.abs(hash) % 360;
+        
+        // 饱和度提到 45%，亮度提到 55%。既保留了莫兰迪的雾面高级感，又能明确区分出红橙黄绿蓝紫
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100%" height="100%" fill="hsl(${hue}, 45%, 55%)"/><text x="50%" y="54%" font-size="46" font-family="system-ui, -apple-system, sans-serif" font-weight="600" fill="#ffffff" dominant-baseline="middle" text-anchor="middle">${char}</text></svg>`;
+        
+        return `data:image/svg+xml,` + encodeURIComponent(svg);
+      }
+
       async function api(path, opts) {
         try {
           const r = await fetch(API + path, opts);
@@ -80,7 +98,7 @@
           row.className = 'session-item' + (s.id === currentSessionId ? ' active' : '');
           const pinIcon = s.pinned ? '<span style="font-size:11px;margin-right:2px;">📌</span>' : '';
           row.innerHTML =
-            '<img src="' + (s.avatar || '/logo.png') + '">' +
+            '<img src="' + (s.avatar || getFallbackAvatar(s.character_name)) + '">' +
             '<div class="session-item-text">' +
             '<div class="session-item-name">' + pinIcon + escHtml(s.character_name) + '</div>' +
             '<div class="session-item-preview">' + escHtml(s.preview || '暂无消息') + '</div>' +
@@ -221,6 +239,97 @@
         createSession(cur ? cur.character : 'default');
       });
 
+      // ---------- 测试推送：往配置的通道发一条，确认手机能收到 ----------
+      $('row-notify-test').addEventListener('click', async () => {
+        showToast('正在发送测试推送…');
+        try {
+          const r = await api('/api/notify/test', { method: 'POST' });
+          if (r.ok) { showToast('已发送 📲 图标地址：' + (r.icon || '无')); console.log('推送图标URL:', r.icon); }
+          else showToast('推送失败：' + (r.detail || '未知'));
+        } catch (e) { showToast('请求失败：' + e); }
+      });
+
+      // ---------- 主动联系面板：看/加/删本会话的定时任务 ----------
+      $('row-outreach').addEventListener('click', openOutreachPanel);
+
+      function openOutreachPanel() {
+        const esc = s => (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const post = (path, obj) => api(withSid(path), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(obj) });
+        const BTN = 'padding:5px 11px;border:none;border-radius:8px;font-size:12px;cursor:pointer;background:var(--user-bubble,#0a84ff);color:#fff;';
+        const INP = 'padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;';
+        const DEL = 'background:none;border:none;color:#ff3b30;cursor:pointer;font-size:13px;padding:4px 6px;';
+        const KIND = { once: '一次', daily: '每日', interval: '周期', idle: '久未聊' };
+        const MODE = { wake: '唤醒生成', push: '固定文案' };
+
+        const mask = document.createElement('div'); mask.className = 'action-sheet-mask';
+        const box = document.createElement('div');
+        box.style.cssText = 'position:fixed;top:6%;left:3%;right:3%;bottom:6%;z-index:610;background:var(--surface);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;';
+        const header = document.createElement('div');
+        header.style.cssText = 'padding:14px 16px;font-weight:600;font-size:15px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;';
+        header.innerHTML = '<span>主动联系 · 当前会话</span><button style="background:none;border:none;font-size:20px;color:var(--text);cursor:pointer;">✕</button>';
+        const bodyEl = document.createElement('div');
+        bodyEl.style.cssText = 'flex:1;overflow:auto;padding:10px 16px 20px;';
+        box.appendChild(header); box.appendChild(bodyEl);
+        const dismiss = () => { box.remove(); mask.remove(); };
+        header.querySelector('button').addEventListener('click', dismiss);
+        mask.addEventListener('click', dismiss);
+        document.body.appendChild(mask); document.body.appendChild(box);
+        requestAnimationFrame(() => mask.classList.add('show'));
+
+        function fmtNext(ts) { if (!ts) return '—'; const d = new Date(ts * 1000); return d.toLocaleString(); }
+
+        async function render() {
+          const jobs = (await api(withSid('/api/outreach'))).jobs || [];
+          let h = `<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px;">角色可在聊天里自己排，也可在这手动加一条测试。</div>`;
+          // 手动添加表单
+          h += `<div style="border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:12px;display:flex;flex-direction:column;gap:6px;">
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <select id="ot-kind" style="${INP}"><option value="once">一次</option><option value="daily">每日</option><option value="interval">周期</option><option value="idle">久未聊</option></select>
+              <select id="ot-mode" style="${INP}"><option value="wake">唤醒生成</option><option value="push">固定文案</option></select>
+              <input id="ot-when" style="${INP}flex:1;min-width:90px;" placeholder="时机：+5m / 08:30 / 180(分)">
+            </div>
+            <input id="ot-text" style="${INP}" placeholder="wake填事由/心情，push填固定文案">
+            <div style="text-align:right;"><button id="ot-add" style="${BTN}">+ 添加任务</button></div>
+          </div>`;
+          if (!jobs.length) h += `<div style="color:var(--text-secondary);font-size:13px;padding:10px 0;">还没有任务。</div>`;
+          jobs.forEach(j => {
+            h += `<div class="ot-item" data-id="${j.id}" style="border:1px solid var(--border);border-radius:10px;padding:9px 11px;margin:7px 0;${j.enabled ? '' : 'opacity:.5;'}">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                <div style="font-size:13px;font-weight:600;">${KIND[j.kind] || j.kind} · ${MODE[j.mode] || j.mode}</div>
+                <div><label style="font-size:11px;color:var(--text-secondary);cursor:pointer;"><input type="checkbox" class="ot-on" ${j.enabled ? 'checked' : ''}>启用</label> <button class="ot-del" style="${DEL}">✕</button></div>
+              </div>
+              <div style="font-size:12px;color:var(--text-secondary);margin-top:3px;">下次：${j.kind === 'idle' ? ('空闲 ' + Math.round((+j.when_spec) / 60) + ' 分触发') : fmtNext(j.next_run)}</div>
+              ${(j.intention || j.content) ? `<div style="font-size:12px;margin-top:3px;">「${esc(j.intention || j.content)}」</div>` : ''}
+            </div>`;
+          });
+          bodyEl.innerHTML = h;
+          bodyEl.querySelector('#ot-add').onclick = async () => {
+            const kind = bodyEl.querySelector('#ot-kind').value;
+            const mode = bodyEl.querySelector('#ot-mode').value;
+            const when = bodyEl.querySelector('#ot-when').value.trim();
+            const t = bodyEl.querySelector('#ot-text').value.trim();
+            if (!when) { showToast('填一下触发时机'); return; }
+            const r = await post('/api/outreach', { kind, mode, when, intention: mode === 'wake' ? t : '', content: mode === 'push' ? t : '' });
+            showToast(r.ok ? '已添加' : ('失败：' + (r.error || ''))); render();
+          };
+          bodyEl.querySelectorAll('.ot-item').forEach(row => {
+            const id = +row.dataset.id;
+            row.querySelector('.ot-del').onclick = async () => { await post('/api/outreach/delete', { id }); showToast('已删除'); render(); };
+            row.querySelector('.ot-on').onchange = async (e) => { await post('/api/outreach/toggle', { id, enabled: e.target.checked }); render(); };
+          });
+        }
+        render();
+      }
+
+      // ---------- 设定助手入口：切到已有助手会话，没有就建一个 ----------
+      $('row-assistant').addEventListener('click', async () => {
+        await loadSessions();
+        const existing = allSessions.find(s => s.character === '__assistant__');
+        closeRight();
+        if (existing) { switchSession(existing.id); showToast('已进入设定助手'); }
+        else { await createSession('__assistant__'); showToast('设定助手已就绪'); }
+      });
+
       // ---------- 提示词缓存（名字列表 + 当前会话绑定）----------
       // 选择面板全部同步地从这些缓存渲染，不在打开时联网。缓存只在：初始化、打开抽屉、
       // 切换会话、以及增删改提示词文件之后刷新。
@@ -240,15 +349,16 @@
         await loadPromptTree();
         if (seed) seedBindingFromServer();
         renderBindingLabels();
-        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-        $('val-theme').textContent = isDark ? '深色' : '浅色';
+        const curTheme = document.documentElement.getAttribute('data-theme') || 'light';
+        $('val-theme').textContent = THEME_LABELS[curTheme] || '浅色';
 
         const cur = allSessions.find(s => s.id === currentSessionId);
 
         if (cur) {
-          $('rp-avatar').src = cur.avatar || '/logo.png';
           $('rp-name').textContent = cur.character_name;
-          $('topbar-avatar').src = cur.avatar || '/logo.png';
+          const fallback = getFallbackAvatar(cur ? cur.character_name : '未命名');
+          $('rp-avatar').src = (cur && cur.avatar) || fallback;
+          $('topbar-avatar').src = (cur && cur.avatar) || fallback;
           $('topbar-title').textContent = cur.character_name;
         } else if (allSessions.length > 0) {
           // ⭐️ 补上这 3 行：如果本地记忆的 ID 在服务器端找不到，自动强行切到列表里的第一个有效会话！
@@ -433,6 +543,98 @@
         render();
       }
 
+      // ---------- 世界书面板 ----------
+      $('row-lore').addEventListener('click', openLorePanel);
+
+      function openLorePanel() {
+        const esc = s => (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        const post = (path, obj) => api(withSid(path), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(obj) });
+        const BTN = 'padding:5px 11px;border:none;border-radius:8px;font-size:12px;cursor:pointer;background:var(--user-bubble,#0a84ff);color:#fff;';
+        const BTNG = 'padding:5px 11px;border:none;border-radius:8px;font-size:12px;cursor:pointer;background:var(--border);color:var(--text);';
+        const INP = 'flex:1;min-width:0;padding:5px 7px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:12px;';
+        const TA = 'width:100%;box-sizing:border-box;padding:7px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:13px;line-height:1.5;resize:vertical;min-height:46px;';
+        const DEL = 'background:none;border:none;color:#ff3b30;cursor:pointer;font-size:13px;padding:4px 6px;';
+
+        const mask = document.createElement('div');
+        mask.className = 'action-sheet-mask';
+        const box = document.createElement('div');
+        box.style.cssText = 'position:fixed;top:5%;left:3%;right:3%;bottom:5%;z-index:610;background:var(--surface);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;';
+        const header = document.createElement('div');
+        header.style.cssText = 'padding:14px 16px;font-weight:600;font-size:15px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;';
+        header.innerHTML = '<span>世界书</span><button style="background:none;border:none;font-size:20px;color:var(--text);cursor:pointer;">✕</button>';
+        const statusBar = document.createElement('div');
+        statusBar.style.cssText = 'padding:10px 16px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-wrap:wrap;';
+        statusBar.innerHTML =
+          '<div style="font-size:12px;color:var(--text-secondary);flex:1;min-width:140px;">常驻条目永远注入；其余靠触发词命中（多词用逗号分隔）</div>' +
+          `<button class="lore-add" style="${BTN}">+ 新建</button>` +
+          `<button class="lore-refresh" style="${BTNG}">刷新</button>`;
+        const bodyEl = document.createElement('div');
+        bodyEl.style.cssText = 'flex:1;overflow:auto;padding:6px 16px 20px;';
+        box.appendChild(header); box.appendChild(statusBar); box.appendChild(bodyEl);
+        const dismiss = () => { box.remove(); mask.remove(); };
+        header.querySelector('button').addEventListener('click', dismiss);
+        mask.addEventListener('click', dismiss);
+        document.body.appendChild(mask); document.body.appendChild(box);
+        requestAnimationFrame(() => mask.classList.add('show'));
+
+        async function render() { draw((await api(withSid('/api/lore'))).lore || []); }
+
+        function entryCard(e) {
+          const on = !!e.always_on;
+          return `<div class="lore-item" data-id="${e.id}" style="margin:8px 0;padding:10px;border:1px solid var(--border);border-radius:10px;">` +
+            `<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">` +
+            `<input class="lore-title" value="${esc(e.title)}" placeholder="标题" style="${INP}font-weight:600;">` +
+            `<label style="font-size:11px;color:var(--text-secondary);display:flex;align-items:center;gap:3px;white-space:nowrap;cursor:pointer;"><input type="checkbox" class="lore-on" ${on ? 'checked' : ''}>常驻</label>` +
+            `<input class="lore-pri" type="number" value="${e.priority || 0}" title="优先级" style="${INP}max-width:54px;flex:0 0 54px;">` +
+            `</div>` +
+            `<input class="lore-keys" value="${esc((e.keys || []).join('，'))}" placeholder="触发词，逗号分隔（常驻可留空）" style="${INP}width:100%;margin-bottom:6px;${on ? 'opacity:.5;' : ''}">` +
+            `<textarea class="lore-content" placeholder="设定正文" style="${TA}">${esc(e.content)}</textarea>` +
+            `<div style="text-align:right;margin-top:5px;"><button class="lore-save" style="${BTN}">保存</button> <button class="lore-del" style="${DEL}">删除</button></div></div>`;
+        }
+
+        function draw(list) {
+          let h = '';
+          const ons = list.filter(e => e.always_on), keyed = list.filter(e => !e.always_on);
+          if (ons.length) h += `<div style="font-size:12px;color:var(--text-secondary);margin:10px 0 4px;font-weight:600;">常驻 · Tier 0 (${ons.length})</div>` + ons.map(entryCard).join('');
+          if (keyed.length) h += `<div style="font-size:12px;color:var(--text-secondary);margin:14px 0 4px;font-weight:600;">触发 · Tier 1 (${keyed.length})</div>` + keyed.map(entryCard).join('');
+          if (!list.length) h += '<div style="color:var(--text-secondary);font-size:13px;padding:14px 0;">还没有设定条目。点「+ 新建」加一条，常驻设定勾上「常驻」，场景相关的设定写好触发词。</div>';
+          bodyEl.innerHTML = h;
+          wire();
+        }
+
+        const parseKeys = s => (s || '').split(/[，,]/).map(x => x.trim()).filter(Boolean);
+
+        function wire() {
+          statusBar.querySelector('.lore-refresh').onclick = render;
+          statusBar.querySelector('.lore-add').onclick = async () => {
+            const r = await post('/api/lore', { title: '新设定', content: '', keys: [] });
+            if (r.ok) { await render(); bodyEl.scrollTop = bodyEl.scrollHeight; } else showToast(r.error || '新建失败');
+          };
+          box.querySelectorAll('.lore-item').forEach(row => {
+            const id = +row.dataset.id;
+            const onBox = row.querySelector('.lore-on');
+            onBox.onchange = () => { row.querySelector('.lore-keys').style.opacity = onBox.checked ? '.5' : '1'; };
+            row.querySelector('.lore-save').onclick = async () => {
+              const title = row.querySelector('.lore-title').value.trim();
+              const content = row.querySelector('.lore-content').value.trim();
+              if (!title || !content) { showToast('标题和正文都要填'); return; }
+              const r = await post('/api/lore/update', {
+                id, title, content,
+                keys: parseKeys(row.querySelector('.lore-keys').value),
+                priority: +row.querySelector('.lore-pri').value || 0,
+                always_on: onBox.checked
+              });
+              showToast(r.ok ? '已保存' : '保存失败');
+            };
+            row.querySelector('.lore-del').onclick = async () => {
+              await post('/api/lore/delete', { id }); showToast('已删除'); render();
+            };
+          });
+        }
+
+        render();
+      }
+
       // ---------- 通用：选择某分类的提示词文件 ----------
       function pencilSvg() {
         return '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
@@ -499,8 +701,70 @@
         });
       }
 
+      // ===== 角色音色（仅角色编辑用） =====
+      const VOICE_PRESETS = [
+        { id: '', label: '（用全局默认音色）' },
+        { id: 'Chinese (Mandarin)_Gentleman', label: '绅士男声' },
+        { id: 'Chinese (Mandarin)_Lady', label: '优雅女声' },
+        { id: 'female-tianmei', label: '甜美女声' },
+        { id: 'female-shaonv', label: '少女音' },
+        { id: 'female-yujie', label: '御姐音' },
+        { id: 'female-chengshu', label: '成熟女声' },
+        { id: 'male-qn-qingse', label: '青涩青年' },
+        { id: 'male-qn-jingying', label: '精英青年' },
+        { id: 'male-qn-badao', label: '霸道青年' },
+        { id: 'presenter_male', label: '男主持' },
+        { id: 'presenter_female', label: '女主持' },
+        { id: 'audiobook_male_1', label: '有声书男声' },
+        { id: 'audiobook_female_1', label: '有声书女声' },
+      ];
+      let _voiceSelFilled = false;
+      function populateVoiceSelect() {
+        if (_voiceSelFilled) return;
+        $('edit-voice').innerHTML = VOICE_PRESETS
+          .map(v => '<option value="' + v.id + '">' + escHtml(v.label) + '</option>').join('');
+        _voiceSelFilled = true;
+      }
+      function setVoiceFields(v) {
+        v = v || {};
+        $('edit-voice').value = v.voice_id || '';
+        $('edit-voice-speed').value = (v.speed != null ? v.speed : 1);
+        $('edit-voice-pitch').value = (v.pitch != null ? v.pitch : 0);
+      }
+      function collectVoiceFields() {
+        return {
+          voice_id: $('edit-voice').value,
+          speed: parseFloat($('edit-voice-speed').value) || 1,
+          pitch: parseInt($('edit-voice-pitch').value) || 0,
+        };
+      }
+      let _voicePreview = null;
+      function previewVoice() {
+        const btn = $('edit-voice-try');
+        btn.disabled = true; btn.textContent = '合成中…';
+        fetch(API + '/api/tts', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: '你好呀，这是我现在的声音，听起来怎么样？', voice: collectVoiceFields() })
+        }).then(r => r.json()).then(d => {
+          if (d && d.ok) {
+            if (_voicePreview) { try { _voicePreview.pause(); } catch (e) { } }
+            _voicePreview = new Audio(d.audio);
+            _voicePreview.play().catch(() => { });
+          } else {
+            showToast(d && d.error === 'tts_disabled' ? '语音未开启（config.tts.enabled）' : '试听失败');
+          }
+        }).catch(() => showToast('试听失败'))
+          .finally(() => { btn.disabled = false; btn.textContent = '试听'; });
+      }
+
       async function openEditSheet(category, name, onDone) {
         $('edit-avatar-row').style.display = category === 'character' ? '' : 'none';
+        $('edit-voice-row').style.display = category === 'character' ? '' : 'none';
+        if (category === 'character') {
+          populateVoiceSelect();
+          setVoiceFields({});
+          $('edit-voice-try').onclick = previewVoice;
+        }
         $('edit-name').value = '';
         $('edit-name').disabled = false;
         $('edit-content').value = '';
@@ -515,6 +779,7 @@
             $('edit-content').value = data.data.content || '';
             avatarData = data.data.avatar || '';
             if (avatarData) $('edit-avatar-preview').src = avatarData;
+            if (category === 'character') setVoiceFields(data.data.voice || {});
           }
         }
         $('edit-avatar-file').onchange = (e) => {
@@ -538,7 +803,7 @@
           if (!newDisplayName) { showToast('请填写名称'); return; }
           const payload = { category, name: name || newDisplayName, content: $('edit-content').value, display_name: newDisplayName };
           if (name) payload.old_name = name;
-          if (category === 'character') payload.avatar = avatarData;
+          if (category === 'character') { payload.avatar = avatarData; payload.voice = collectVoiceFields(); }
           const r = await api('/api/prompts/save', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -563,7 +828,7 @@
 
       function renderCharacterSheet(title, onRowClick) {
         renderSheet(title, characterMeta.map(m => ({
-          name: m.key, label: m.name || m.key, avatar: m.avatar || '/logo.png'
+          name: m.key, label: m.name || m.key, avatar: m.avatar || getFallbackAvatar(m.name || m.key)
         })), {
           onSelect: (key) => onRowClick(key),
           onKebab: (key) => {
@@ -643,7 +908,7 @@
         cloneName = cloneName + n;
         const r = await api('/api/prompts/save', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ category: 'character', name: cloneName, content: d.content || '', avatar: d.avatar || '' })
+          body: JSON.stringify({ category: 'character', name: cloneName, content: d.content || '', avatar: d.avatar || '', voice: d.voice || {} })
         });
         if (r.ok) { showToast('已克隆'); refreshCachesThen(() => renderCharacterSheet(sheetTitle, onRowClick)); }
         else { showToast('克隆失败'); }
@@ -787,10 +1052,12 @@
 
       // ---------- 主题 ----------
       function openThemeSheet() {
-        const cur = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+        const cur = document.documentElement.getAttribute('data-theme') || 'light';
         renderSheet('主题', [
           { name: 'light', label: '浅色', selected: cur === 'light' },
           { name: 'dark', label: '深色', selected: cur === 'dark' },
+          { name: 'midnight', label: '午夜来电', selected: cur === 'midnight' },
+          { name: 'paper', label: '纸质墨色', selected: cur === 'paper' },
         ], {
           onSelect: (k) => { setTheme(k); closeSheet('sheet-select', 'mask-sheet'); },
         });

@@ -1,4 +1,4 @@
 {
   "name": "默认",
-  "content": "<rule>\n1. 若scene未初始化，必须根据背景合理设置起点。\n2. Scene仅在本轮发生重大时间流逝或地点转移（如吃完饭回了教室、第二天清晨、周末游乐园），更新状态。否则无需输出。\n3. Segment: 清晨(05-07); 上午(08-10); 中午(11-12); 下午(13-16); 傍晚(17-19); 晚上(20-23); 凌晨(00-04)\n<rule>\n\n<output_format>\n<msg>\n  // 仅在发生变化时输出Scene\n  <scene id=\"scene_{Seq}\" time=\"Day {Seq}·{TimeSegment}\" place=\"{SpecificArea}\" />\n  <content>{正文}</content>\n</msg>\n<outPut_format>"
+  "content": ""
 }

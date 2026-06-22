@@ -43,11 +43,9 @@
   <div class="chat-scroll" id="chat-scroll">
     <div class="chat-container" id="chat">
       <div class="welcome" id="welcome">
-        <div class="welcome-icon">
-          <img src="/logo.png" style="width:56px;height:56px;border-radius:16px;">
-        </div>
-        <div class="welcome-title">Hi there</div>
-        <div class="welcome-hint">Send a message — I'm listening on the other side.</div>
+        <div class="welcome-pulse">S Y S T E M   O N L I N E</div>
+        <div class="welcome-title">「 尚未建立信号连接 」</div>
+        <div class="welcome-hint">Frequency open. Send your first whisper.</div>
       </div>
     </div>
     <div class="msg typing" id="typing">
@@ -123,6 +121,21 @@
             d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v12zm-2-1h-6v-2h6v2zM7.5 17l-1.41-1.41L8.67 13l-2.59-2.59L7.5 9l4 4-4 4z" />
         </svg>
       </button>
+      <button class="topbar-btn" id="btn-tts" title="语音自动读：开/关">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M11 5 6 9H2v6h4l5 4V5z" />
+          <path d="M15.5 8.5a5 5 0 010 7" />
+          <path d="M18.5 5.5a9 9 0 010 13" />
+        </svg>
+      </button>
+      <button class="topbar-btn" id="btn-tts-narration" title="只读台词（跳过括号旁白）">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
+          <path d="M9 10h6M9 13.5h4" />
+        </svg>
+      </button>
       <button class="topbar-btn" id="btn-char-manage" title="角色管理">
         <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"
           stroke-linecap="round">
@@ -166,6 +179,14 @@
     <div class="drawer-row" id="row-bubble"><span>气泡模式</span><span class="drawer-row-val" id="val-bubble">关</span></div>
     <div class="drawer-row" id="row-memory"><span>记忆管理</span><span class="drawer-row-val"
         style="font-size:11px;opacity:0.5;">查看 / 总结 / 编辑</span></div>
+    <div class="drawer-row" id="row-lore"><span>世界书</span><span class="drawer-row-val"
+        style="font-size:11px;opacity:0.5;">设定 / 触发词</span></div>
+    <div class="drawer-row" id="row-assistant"><span>设定助手</span><span class="drawer-row-val"
+        style="font-size:11px;opacity:0.5;">AI 帮你配置设定</span></div>
+    <div class="drawer-row" id="row-notify-test"><span>测试推送</span><span class="drawer-row-val"
+        style="font-size:11px;opacity:0.5;">给手机发条通知</span></div>
+    <div class="drawer-row" id="row-outreach"><span>主动联系</span><span class="drawer-row-val"
+        style="font-size:11px;opacity:0.5;">角色定时找你</span></div>
     <div class="drawer-row" id="row-debug"><span>调试日志</span><span class="drawer-row-val"
         style="font-size:11px;opacity:0.5;">上次请求</span></div>
     <div class="drawer-section-title">系统配置</div>
@@ -191,6 +212,17 @@
       <img id="edit-avatar-preview" src="/logo.png"
         style="width:56px;height:56px;border-radius:50%;object-fit:cover;margin:8px 0;">
       <input type="file" id="edit-avatar-file" accept="image/*">
+    </div>
+    <div id="edit-voice-row" style="display:none;">
+      <div class="edit-voice-cap">音色（仅此角色，留默认则用全局）</div>
+      <div class="edit-voice-line">
+        <select id="edit-voice" class="sheet-input"></select>
+        <button type="button" class="edit-voice-try" id="edit-voice-try">试听</button>
+      </div>
+      <div class="edit-voice-knobs">
+        <label>语速 <input type="number" id="edit-voice-speed" min="0.5" max="2" step="0.1" value="1"></label>
+        <label>音调 <input type="number" id="edit-voice-pitch" min="-12" max="12" step="1" value="0"></label>
+      </div>
     </div>
     <textarea id="edit-content" class="sheet-textarea" placeholder="内容..."></textarea>
     <div class="sheet-edit-actions">

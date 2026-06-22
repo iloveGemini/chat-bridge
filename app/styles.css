@@ -9,6 +9,9 @@
       --user-text: #ffffff;
       --ai-bubble: #ffffff;
       --ai-text: #2d2d2d;
+      /* 气泡背景（可填渐变）：默认回退到纯色，主题可单独覆盖 */
+      --user-bubble-bg: var(--user-bubble);
+      --ai-bubble-bg: var(--ai-bubble);
       --input-bg: #ffffff;
       --send-bg: #2d2d2d;
       --send-color: #ffffff;
@@ -37,6 +40,167 @@
       --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
       --status-ok: #a78bfa;
       --menu-bg: rgba(26, 26, 46, 0.85);
+    }
+
+    /* 午夜来电 —— 移植自旅程社区「短信/来电」系深蓝紫主题 */
+    [data-theme="midnight"] {
+      --bg: #1e1f21;
+      --surface: #2a2b2d;
+      --border: rgba(119, 134, 175, 0.18);
+      --text: #e6ebf5;
+      --text-secondary: #a1b5d8;
+      --text-faint: #7786af;
+      --user-bubble: #7d5a85;
+      --user-text: #ffffff;
+      --ai-bubble: #345392;
+      --ai-text: #e6ebf5;
+      --input-bg: #2a2b2d;
+      --send-bg: linear-gradient(135deg, #345392, #084a7c);
+      --send-color: #ffffff;
+      --shadow: 0 2px 8px rgba(8, 74, 124, 0.4);
+      --status-ok: #a1b5d8;
+      --menu-bg: rgba(30, 31, 33, 0.92);
+      /* 多气泡 5 色循环的默认占位（第 1 套） */
+      --v-bg1: #0d4e80;
+      --v-bg2: #3a5ca0;
+      --v-bd: rgba(120, 150, 200, 0.5);
+    }
+
+    /* ===== 午夜来电 (Midnight)===== */
+    [data-theme="midnight"] {
+      --bg: #2a2b2d;
+      --surface: rgba(30, 31, 33, 0.92);
+      --border: rgba(119, 134, 175, 0.22);
+      --text: #e6ebf5;
+      --text-secondary: #a1b5d8;
+      --text-faint: #7786af;
+      --user-bubble: #7d5a85;
+      --user-text: #ffffff;
+      --ai-bubble: #345392;
+      --ai-text: #e6ebf5;
+      --input-bg: rgba(42, 43, 45, 0.9);
+      --send-bg: linear-gradient(135deg, #345392, #084a7c);
+      --send-color: #ffffff;
+      --shadow: 0 10px 30px rgba(8, 74, 124, 0.4);
+      --status-ok: #a1b5d8;
+      --menu-bg: rgba(30, 31, 33, 0.95);
+      /* 灵魂对齐：夜间模式也必须用宋体栈，才有文学感 */
+      --font: "Songti SC", "Noto Serif SC", "STSong", "SimSun", -apple-system, BlinkMacSystemFont, sans-serif;
+
+      /* 多气泡 5 色循环的默认占位（第 1 套） */
+      --v-bg1: rgba(8, 74, 124, 0.4);
+      --v-bg2: rgba(52, 83, 146, 0.4);
+      --v-bd: rgba(52, 83, 146, 0.6);
+      --v-sd-in: rgba(8, 74, 124, 0.3);
+      --v-sd-out: rgba(52, 83, 146, 0.3);
+    }
+
+    /* ===== 1. 跨消息行级循环（原汁原味的 0.4 透明度 RGB） ===== */
+    [data-theme="midnight"] .msg:nth-child(5n+1) {
+      --v-bg1: rgba(8, 74, 124, 0.4);
+      --v-bg2: rgba(52, 83, 146, 0.4);
+      --v-bd: rgba(52, 83, 146, 0.6);
+      --v-sd-in: rgba(8, 74, 124, 0.3);
+      --v-sd-out: rgba(52, 83, 146, 0.3);
+    }
+
+    [data-theme="midnight"] .msg:nth-child(5n+2) {
+      --v-bg1: rgba(52, 83, 146, 0.4);
+      --v-bg2: rgba(119, 134, 175, 0.4);
+      --v-bd: rgba(119, 134, 175, 0.6);
+      --v-sd-in: rgba(52, 83, 146, 0.3);
+      --v-sd-out: rgba(119, 134, 175, 0.3);
+    }
+
+    [data-theme="midnight"] .msg:nth-child(5n+3) {
+      --v-bg1: rgba(119, 134, 175, 0.4);
+      --v-bg2: rgba(125, 90, 133, 0.4);
+      --v-bd: rgba(125, 90, 133, 0.6);
+      --v-sd-in: rgba(119, 134, 175, 0.3);
+      --v-sd-out: rgba(125, 90, 133, 0.3);
+    }
+
+    [data-theme="midnight"] .msg:nth-child(5n+4) {
+      --v-bg1: rgba(125, 90, 133, 0.4);
+      --v-bg2: rgba(205, 154, 177, 0.4);
+      --v-bd: rgba(205, 154, 177, 0.6);
+      --v-sd-in: rgba(125, 90, 133, 0.3);
+      --v-sd-out: rgba(205, 154, 177, 0.3);
+    }
+
+    [data-theme="midnight"] .msg:nth-child(5n+5) {
+      --v-bg1: rgba(205, 154, 177, 0.4);
+      --v-bg2: rgba(8, 74, 124, 0.4);
+      --v-bd: rgba(8, 74, 124, 0.6);
+      --v-sd-in: rgba(205, 154, 177, 0.3);
+      --v-sd-out: rgba(8, 74, 124, 0.3);
+    }
+
+    /* ===== 2. 气泡模式下，单条 AI 回复内部的多气泡光谱循环 ===== */
+    [data-theme="midnight"] .msg-multi .msg-bubble:nth-child(5n+1) {
+      --v-bg1: rgba(8, 74, 124, 0.4);
+      --v-bg2: rgba(52, 83, 146, 0.4);
+      --v-bd: rgba(52, 83, 146, 0.6);
+      --v-sd-in: rgba(8, 74, 124, 0.3);
+      --v-sd-out: rgba(52, 83, 146, 0.3);
+    }
+
+    [data-theme="midnight"] .msg-multi .msg-bubble:nth-child(5n+2) {
+      --v-bg1: rgba(52, 83, 146, 0.4);
+      --v-bg2: rgba(119, 134, 175, 0.4);
+      --v-bd: rgba(119, 134, 175, 0.6);
+      --v-sd-in: rgba(52, 83, 146, 0.3);
+      --v-sd-out: rgba(119, 134, 175, 0.3);
+    }
+
+    [data-theme="midnight"] .msg-multi .msg-bubble:nth-child(5n+3) {
+      --v-bg1: rgba(119, 134, 175, 0.4);
+      --v-bg2: rgba(125, 90, 133, 0.4);
+      --v-bd: rgba(125, 90, 133, 0.6);
+      --v-sd-in: rgba(119, 134, 175, 0.3);
+      --v-sd-out: rgba(125, 90, 133, 0.3);
+    }
+
+    [data-theme="midnight"] .msg-multi .msg-bubble:nth-child(5n+4) {
+      --v-bg1: rgba(125, 90, 133, 0.4);
+      --v-bg2: rgba(205, 154, 177, 0.4);
+      --v-bd: rgba(205, 154, 177, 0.6);
+      --v-sd-in: rgba(125, 90, 133, 0.3);
+      --v-sd-out: rgba(205, 154, 177, 0.3);
+    }
+
+    [data-theme="midnight"] .msg-multi .msg-bubble:nth-child(5n+5) {
+      --v-bg1: rgba(205, 154, 177, 0.4);
+      --v-bg2: rgba(8, 74, 124, 0.4);
+      --v-bd: rgba(8, 74, 124, 0.6);
+      --v-sd-in: rgba(205, 154, 177, 0.3);
+      --v-sd-out: rgba(8, 74, 124, 0.3);
+    }
+
+    /* ===== 3. 实际上色：注入灵魂的“果冻微光立体阴影” ===== */
+    [data-theme="midnight"] .msg .msg-bubble {
+      background: linear-gradient(135deg, var(--v-bg1), var(--v-bg2)) !important;
+      border: 2px solid var(--v-bd) !important;
+      color: #f0f4f8;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+      border-radius: 24px !important;
+      /* 强制两边对称圆润 */
+    }
+
+    /* 用户气泡：左上高光，右下内阴影 */
+    [data-theme="midnight"] .msg-user .msg-bubble {
+      box-shadow: inset 2px 2px 6px rgba(255, 255, 255, 0.05), inset -2px -2px 6px var(--v-sd-in), 0 4px 8px var(--v-sd-out) !important;
+    }
+
+    /* AI气泡：右上高光，左下内阴影 */
+    [data-theme="midnight"] .msg-ai .msg-bubble {
+      box-shadow: inset -2px 2px 6px rgba(255, 255, 255, 0.05), inset 2px -2px 6px var(--v-sd-in), 0 4px 8px var(--v-sd-out) !important;
+    }
+
+    [data-theme="midnight"] .msg .msg-bubble code,
+    [data-theme="midnight"] .msg .msg-bubble em,
+    [data-theme="midnight"] .msg .msg-bubble q {
+      color: #ffffff;
     }
 
     *,
@@ -184,14 +348,14 @@
     }
 
     .msg-user .msg-bubble {
-      background: var(--user-bubble);
+      background: var(--user-bubble-bg);
       color: var(--user-text);
       border-radius: var(--radius) var(--radius) 6px var(--radius);
       box-shadow: var(--shadow);
     }
 
     .msg-ai .msg-bubble {
-      background: var(--ai-bubble);
+      background: var(--ai-bubble-bg);
       color: var(--ai-text);
       border-radius: var(--radius) var(--radius) var(--radius) 6px;
       box-shadow: var(--shadow);
@@ -280,6 +444,59 @@
       padding: 0 4px;
     }
 
+    /* 语音播放按钮 */
+    .tts-row { margin-top: 6px; padding: 0 2px; }
+    .tts-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      background: var(--ai-bubble);
+      border: 1px solid var(--text-faint);
+      border-radius: 14px;
+      padding: 3px 10px;
+      cursor: pointer;
+      transition: color .15s, border-color .15s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .tts-btn:hover { color: var(--text); border-color: var(--user-bubble); }
+    .tts-btn .tts-ico { line-height: 1; }
+    .tts-btn.playing {
+      color: var(--user-bubble);
+      border-color: var(--user-bubble);
+    }
+    .tts-btn.playing .tts-ico { animation: ttsPulse 1s ease-in-out infinite; }
+    @keyframes ttsPulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+    .tts-btn.loading { opacity: .6; pointer-events: none; }
+    .tts-btn.loading .tts-label::after {
+      content: '合成中…'; }
+    .tts-btn.loading .tts-label { font-size: 0; }
+    .tts-btn.loading .tts-label::after { font-size: 12px; }
+
+    /* 左下角「语音自动读」「只读台词」开关：开启时高亮 */
+    #btn-tts.active,
+    #btn-tts-narration.active { color: var(--user-bubble); }
+
+    /* 角色编辑：音色行 */
+    #edit-voice-row { margin: 4px 0 8px; }
+    .edit-voice-cap { font-size: 12px; color: var(--text-secondary); margin: 6px 2px; }
+    .edit-voice-line { display: flex; gap: 8px; align-items: center; }
+    .edit-voice-line #edit-voice { flex: 1; }
+    .edit-voice-try {
+      flex: 0 0 auto;
+      font-size: 13px;
+      padding: 8px 14px;
+      border-radius: 10px;
+      border: 1px solid var(--user-bubble);
+      color: var(--user-bubble);
+      background: transparent;
+      cursor: pointer;
+    }
+    .edit-voice-try:disabled { opacity: .6; cursor: default; }
+    .edit-voice-knobs { display: flex; gap: 16px; margin: 8px 2px 0; font-size: 12px; color: var(--text-secondary); }
+    .edit-voice-knobs input { width: 64px; margin-left: 4px; padding: 4px 6px; }
+
     .msg-proactive .msg-bubble {
       border-left: 3px solid var(--user-bubble);
     }
@@ -317,7 +534,7 @@
     }
 
     .typing-dots {
-      background: var(--ai-bubble);
+      background: var(--ai-bubble-bg);
       border-radius: var(--radius);
       padding: 14px 20px;
       box-shadow: var(--shadow);
@@ -375,39 +592,33 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      padding: 100px 20px 0;
+      padding: 12vh 20px 0;
       text-align: center;
+      animation: fadeIn 0.8s ease-out;
     }
 
-    .welcome-icon {
-      width: 56px;
-      height: 56px;
-      background: linear-gradient(135deg, #d4a574, #c4956a);
-      border-radius: 16px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-bottom: 20px;
-      box-shadow: 0 4px 12px rgba(212, 165, 116, 0.3);
-    }
-
-    .welcome-icon svg {
-      width: 28px;
-      height: 28px;
-      fill: #fff;
+    .welcome-pulse {
+      font-size: 11px;
+      font-family: "SF Mono", "Cascadia Code", monospace;
+      letter-spacing: 4px;
+      color: var(--status-ok);
+      margin-bottom: 16px;
+      opacity: 0.85;
     }
 
     .welcome-title {
-      font-size: 22px;
-      font-weight: 600;
+      font-size: 24px;
+      font-weight: 300;
+      letter-spacing: 2px;
       margin-bottom: 8px;
-      letter-spacing: -0.3px;
+      color: var(--text);
     }
 
     .welcome-hint {
-      font-size: 14px;
+      font-size: 13px;
       color: var(--text-secondary);
-      line-height: 1.6;
+      letter-spacing: 0.5px;
+      font-style: italic;
     }
 
     /* === BOTTOM BAR === */
@@ -1261,4 +1472,39 @@
     [data-theme="dark"] .btn-jump-bottom:not(.unread) {
       background: var(--ai-bubble);
       color: #fff;
+    }
+
+    /* 经典文学纸质墨色风 */
+    [data-theme="paper"] {
+      --bg: #f6f6f6;
+      --surface: rgba(255, 255, 255, 0.85);
+      --border: rgba(220, 220, 220, 0.8);
+      --text: #646464;
+      --text-secondary: #8f7e72;
+      --text-faint: #a2a2a2;
+      --user-bubble: #8f7e72;
+      --user-text: #646464;
+      --ai-bubble: #f0f0f0;
+      --ai-text: #646464;
+      --user-bubble-bg: #ffffff;
+      --ai-bubble-bg: #f0f0f0;
+      --input-bg: #f2f2f2;
+      --send-bg: #8f7e72;
+      --send-color: #ffffff;
+      --shadow: 0 10px 30px rgba(221, 221, 221, 0.4);
+      --status-ok: #8f7e72;
+      --menu-bg: rgba(255, 255, 255, 0.92);
+      /* 灵魂注入：优先使用宋体/明朝体栈，呼应原版 nanoFullSong 的文学感 */
+      --font: "Songti SC", "Noto Serif SC", "STSong", "SimSun", -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    /* 还原四次元壁精髓：用户气泡纯白带细边框，AI气泡浅灰带白边框 */
+    [data-theme="fourth-wall"] .msg-user .msg-bubble {
+      border: 1px solid rgba(220, 220, 220, 1);
+      box-shadow: 0 3px 6px rgba(168, 168, 168, 0.15);
+    }
+
+    [data-theme="fourth-wall"] .msg-ai .msg-bubble {
+      border: 1px solid #ffffff;
+      box-shadow: 0 3px 6px rgba(168, 168, 168, 0.15);
     }

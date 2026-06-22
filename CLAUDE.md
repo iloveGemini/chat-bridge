@@ -60,6 +60,11 @@ Bash(run_in_background=true): curl -s http://localhost:8800/api/wait_pending
        `<msg><scene id="scene_13" time="Day 2·清晨" place="教学楼走廊" /><content>正文……</content></msg>`
      - `wait_pending` 的返回 JSON 现在带 `scene` 字段（`{scene_id, time, place}`），那是**当前时空状态**，
        据它判断本轮要不要转场、新 id 该是多少。除 `<msg>/<scene>/<content>` 外不要输出别的标签。
+     - **语音表现力（仅当 config.tts.enabled 为真时才加）**：本轮回复会被合成语音朗读时——
+       ① 情绪：在 `<content>` 上加 `emotion` 属性，取值只能是 happy/sad/angry/fearful/surprised/disgusted/neutral 之一，
+          按本条语气选最贴切的，拿不准用 neutral。例：`<content emotion="happy">正文……</content>`
+       ② 停顿：在需要断句/迟疑/换气处插 `<#秒数#>` 标记（秒数 0.1~1.5，如 `<#0.4#>`），一条最多三五处，别滥用。
+          该标记只服务语音，系统会自动从聊天显示里隐藏。语气词（"嗯""唉"等）直接写进正文即可，无需特殊标记。
   3. 推送回复：`curl -s -X POST "http://localhost:8800/api/reply?session_id=<id>" -H "Content-Type: application/json" -d '{"text": "<msg>...你的信封...</msg>"}'`
      服务器会解析信封、推进场景闩锁、只落干净正文；`/api/reply` 内部已清掉 `pending`，
      **不需要再额外调用 `/api/done`**。万一漏包信封直接发纯文本，系统也会兜底把整段当正文，不报错。
@@ -98,6 +103,16 @@ Bash(run_in_background=true): curl -s http://localhost:8800/api/wait_pending
 - 如果距离用户上次发消息超过 15 分钟，且你认为有必要（比如上次话题未完），可以主动发一条消息
 - 通过 `/api/reply` 发送，附加 `"proactive": true`
 - 主动消息应自然、简短，不要骚扰
+
+### 调度唤醒的主动消息（scheduler 驱动）
+
+角色可在聊天里用 `schedule_outreach` 工具给自己排「之后主动找用户」的任务（once/daily/interval/idle）。
+到点时若是 `wake` 模式：
+- **api 模式**：server 自己生成并推送，你无需参与。
+- **claude_mode**：server 唤醒该会话，`wait_pending` 返回的 JSON 带 `"proactive": true`，
+  `text` 是一段「系统·主动联系时机」的指令（含事由）。此时你要：①以角色身份组织一条自然简短的主动消息（照常 `<msg>` 信封）；
+  ②`/api/reply?session_id=<id>` 发送并在 JSON 附带 `"proactive": true`（server 据此推送到手机）。
+  这不是用户发来的消息，是角色履行自己之前定下的"想联系对方"的心意。
 
 ## MCP 路径结构（仅真实用户）
 
