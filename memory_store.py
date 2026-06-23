@@ -55,6 +55,18 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     return d
 
 
+def _scope_in_clause(scope):
+    """scope 可为单个字符串或字符串列表。返回 (where 片段, 参数元组)。
+    空列表会构造出一个永假条件，安全地返回零行。"""
+    if isinstance(scope, (list, tuple, set)):
+        scopes = [s for s in scope if s]
+        if not scopes:
+            return ("1=0", ())
+        placeholders = ",".join("?" for _ in scopes)
+        return (f"scope IN ({placeholders})", tuple(scopes))
+    return ("scope = ?", (scope,))
+
+
 # ==================== 初始化与管理 ====================
 
 def init_db(db_path: str) -> None:
@@ -160,6 +172,36 @@ def init_db(db_path: str) -> None:
         _fact_cols = [r[1] for r in _conn.execute("PRAGMA table_info(facts)").fetchall()]
         if "is_state" not in _fact_cols:
             _conn.execute("ALTER TABLE facts ADD COLUMN is_state INTEGER DEFAULT 0;")
+
+        # 迁移：lore 表加 last_surfaced（主动召回冷却用：上次被「主动提起」的时间戳）
+        _lore_cols = [r[1] for r in _conn.execute("PRAGMA table_info(lore)").fetchall()]
+        if "last_surfaced" not in _lore_cols:
+            _conn.execute("ALTER TABLE lore ADD COLUMN last_surfaced REAL DEFAULT 0;")
+
+        # 7. 世界书容器表（独立实体，可绑角色/绑用户/不绑；条目挂在 scope='wb:<id>' 下）
+        _conn.execute("""
+        CREATE TABLE IF NOT EXISTS worldbooks (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          bind_type TEXT NOT NULL DEFAULT 'none',   -- 'character' | 'user' | 'none'
+          bind_target TEXT DEFAULT '',              -- 角色 key / 用户 key / ''
+          created_at REAL, updated_at REAL
+        );
+        """)
+
+        # 一次性迁移：旧世界书条目绑在会话 scope（sess:*）上，新模型改绑世界书。
+        # 按产品决策「清空重来」，把残留的会话级 lore 物理清除（只清 sess:*，wb:* 保留）。
+        # 注意：此处仍持有 _lock，不能调用会再次加锁的 set_meta/get_meta，直接走 _conn。
+        try:
+            _mig = _conn.execute(
+                "SELECT data FROM meta WHERE key='lore_wb_migrated'").fetchone()
+            if not _mig:
+                _conn.execute("DELETE FROM lore WHERE scope LIKE 'sess:%'")
+                _conn.execute(
+                    "INSERT OR REPLACE INTO meta (key, data, updated_at) VALUES (?,?,?)",
+                    ("lore_wb_migrated", "1", time.strftime("%Y-%m-%d %H:%M:%S")))
+        except Exception:
+            pass
 
         _conn.commit()
 
@@ -613,6 +655,7 @@ def delete_scope(scope: str, session_id: str) -> dict:
                       (f"arc:{scope}", f"session:{session_id}"))
         _conn.execute("DELETE FROM meta WHERE key=?", (f"summ:{session_id}",))
         _conn.commit()
+    reset_lore_warm(session_id)
     return {"ok": True}
 
 
@@ -620,14 +663,22 @@ def delete_scope(scope: str, session_id: str) -> dict:
 
 def build_memory_context(scope: str, session_id: str, *, query_vec: Optional[list[float]] = None,
                          query_text: str = "", top_k: int = 5, recall_n: int = 30,
-                         lore_scan: str = "", diag: Optional[dict] = None) -> str:
+                         lore_scan: str = "", lore_sem_topk: int = 3,
+                         lore_sem_threshold: float = 0.40, lore_warm_rounds: int = 0,
+                         lore_scopes: Optional[list] = None,
+                         diag: Optional[dict] = None) -> str:
     """多级混合检索并动态组装最终注入大模型的 Prompt 文本块。
     传入 diag={} 可拿到本次召回的可观测诊断（模式/分数/命中/去重），用于日志。
     lore_scan：世界书扫描文本（当前消息+近况+场景地点/时间），命中才注入设定。"""
     sections = []
 
     # 0. 世界书段（静态设定，舞台背景，放最前）：always_on 常驻 + 关键词触发
-    lore_hits = recall_lore(scope, lore_scan, diag=diag)
+    # 世界书已与记忆 scope 解耦：lore_scopes 为本会话适用的多本世界书 scope（绑角色/绑用户/手动挂）。
+    # 兼容旧调用：未显式传 lore_scopes 时退回记忆 scope。
+    _lore_scope = lore_scopes if lore_scopes is not None else scope
+    lore_hits = recall_lore(_lore_scope, lore_scan, query_vec=query_vec,
+                            sem_topk=lore_sem_topk, sem_threshold=lore_sem_threshold,
+                            session_id=session_id, warm_rounds=lore_warm_rounds, diag=diag)
     if lore_hits:
         lore_lines = [f"【{e['title']}】{e['content']}" for e in lore_hits]
         sections.append("<world_book>\n" + "\n".join(lore_lines) + "\n</world_book>")
@@ -728,6 +779,21 @@ def format_recall_log(diag: dict) -> str:
             + (" ⚠️ 空召回" if diag.get("empty") else ""))
             
     lines = [head]
+    lore = diag.get("lore", [])
+    if lore:
+        def _lore_tag(l):
+            via = l.get("via", "keyword")
+            if via == "always":
+                return "[常驻]"
+            if via == "semantic":
+                return f"[语义 {l.get('score'):.2f}]" if l.get("score") is not None else "[语义]"
+            if via == "warm":
+                return f"[warm +{l.get('age')}]" if l.get("age") is not None else "[warm]"
+            kh = l.get("keys_hit") or []
+            return f"[词:{','.join(kh[:2])}]" if kh else "[词]"
+        lines.append(f"   📖 世界书命中:{len(lore)}")
+        for l in lore:
+            lines.append(f"      ├─ {_lore_tag(l)} {_clean(l.get('title',''), 20)}")
     for i, e in enumerate(evs, 1):
         w = f"({e['weight']})" if e.get("weight") else ""
         lines.append(f"   ├─ 回忆{i} {_mark(e)}{w} {_clean(e.get('snippet',''), 24)}")
@@ -749,9 +815,11 @@ def format_recall_log(diag: dict) -> str:
 
 # ==================== 世界书（World Book / Lorebook）====================
 
-def _lore_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+def _lore_row_to_dict(row: sqlite3.Row, *, keep_embedding: bool = False) -> dict[str, Any]:
     d = dict(row)
-    d.pop("embedding", None)
+    d["has_embedding"] = d.get("embedding") is not None
+    if not keep_embedding:
+        d.pop("embedding", None)
     try:
         d["keys"] = json.loads(d.get("keys") or "[]")
     except Exception:
@@ -810,24 +878,99 @@ def delete_lore(row_id) -> bool:
         return cur.rowcount > 0
 
 
-def recall_lore(scope: str, scan_text: str, *, budget_chars: Optional[int] = None,
+# 迟滞防抖状态：session_id -> {"round": 轮次, "hit": {entry_id: 最后命中轮次}}
+# 关键词/语义命中过的条目在 warm_rounds 轮内即使本轮没命中也保留，避免「忽然忘事」。
+_LORE_WARM: dict[str, dict] = {}
+
+def reset_lore_warm(session_id: Optional[str] = None) -> None:
+    """清空迟滞状态。不传 session_id 则全清（主要给测试/会话删除用）。"""
+    if session_id is None:
+        _LORE_WARM.clear()
+    else:
+        _LORE_WARM.pop(session_id, None)
+
+
+def recall_lore(scope: str, scan_text: str, *, query_vec: Optional[list[float]] = None,
+                sem_topk: int = 3, sem_threshold: float = 0.40,
+                budget_chars: Optional[int] = None,
+                session_id: Optional[str] = None, warm_rounds: int = 0,
                 diag: Optional[dict] = None) -> list[dict]:
-    """两通道召回：always_on 常驻 + 关键词命中。
+    """三通道召回 + 迟滞防抖：always_on 常驻 + 关键词命中 + 语义 top-k 兜底 + warm 保留。
     - scan_text：当前消息+近况+场景地点/时间，用于关键词扫描。
+    - query_vec：查询向量；提供时对未命中关键词的条目做余弦召回，
+      取相似度 ≥ sem_threshold 的前 sem_topk 条（专有名词靠关键词，模糊场景靠语义）。
+    - warm_rounds>0 且给了 session_id：关键词/语义命中过的条目，在随后 warm_rounds 轮内
+      即使本轮未命中也保留（迟滞），减少条目抖动；always_on 不受影响。
     - 命中条目按 (always_on, priority, id) 排序；可选 budget_chars 截断。
     返回 dict 列表（含 title/content/keys/priority/always_on）。"""
-    rows = [_lore_row_to_dict(r) for r in
-            _conn.execute("SELECT * FROM lore WHERE scope=?", (scope,)).fetchall()]
+    _clause, _params = _scope_in_clause(scope)
+    rows = [_lore_row_to_dict(r, keep_embedding=True) for r in
+            _conn.execute(f"SELECT * FROM lore WHERE {_clause}", _params).fetchall()]
     scan = scan_text or ""
     selected, hit_log = [], []
+    chosen_ids = set()
+    fresh_ids = set()   # 本轮真正命中（关键词/语义）的条目，用于刷新 warm 时间戳
     for e in rows:
         on = bool(e.get("always_on"))
         matched = [k for k in (e.get("keys") or []) if k and k in scan]
         if on or matched:
+            e.pop("embedding", None)
             selected.append(e)
+            chosen_ids.add(e.get("id"))
+            if matched:
+                fresh_ids.add(e.get("id"))
             if diag is not None:
                 hit_log.append({"title": e.get("title"), "always_on": on,
-                                "keys_hit": matched})
+                                "keys_hit": matched, "via": "always" if on else "keyword"})
+
+    # 语义通道：对尚未命中的条目按余弦排序，过阈值取 top-k（关键词已命中的不重复算）
+    if query_vec is not None:
+        scored = []
+        for e in rows:
+            if e.get("id") in chosen_ids:
+                continue
+            vec = _decode_vec(e.get("embedding"))
+            if not vec:
+                continue
+            score = _cosine(query_vec, vec)
+            if score >= sem_threshold:
+                scored.append((score, e))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        for score, e in scored[:max(0, sem_topk)]:
+            e.pop("embedding", None)
+            selected.append(e)
+            chosen_ids.add(e.get("id"))
+            fresh_ids.add(e.get("id"))
+            if diag is not None:
+                hit_log.append({"title": e.get("title"), "always_on": False,
+                                "keys_hit": [], "via": "semantic", "score": round(score, 3)})
+
+    # 迟滞防抖：刷新本轮命中的时间戳，再把仍在 warm 窗口内、本轮未命中的条目补回来
+    if warm_rounds > 0 and session_id is not None:
+        st = _LORE_WARM.setdefault(session_id, {"round": 0, "hit": {}})
+        st["round"] += 1
+        cur_round = st["round"]
+        for rid in fresh_ids:
+            st["hit"][rid] = cur_round
+        rows_by_id = {e.get("id"): e for e in rows}
+        for rid, last in list(st["hit"].items()):
+            age = cur_round - last
+            if age > warm_rounds:
+                del st["hit"][rid]            # 过期退场
+                continue
+            if rid in chosen_ids:
+                continue                       # 本轮已命中，无需 warm 补
+            e = rows_by_id.get(rid)
+            if e is None:
+                del st["hit"][rid]            # 条目已被删
+                continue
+            e.pop("embedding", None)
+            selected.append(e)
+            chosen_ids.add(rid)
+            if diag is not None:
+                hit_log.append({"title": e.get("title"), "always_on": bool(e.get("always_on")),
+                                "keys_hit": [], "via": "warm", "age": age})
+
     # 排序：常驻优先，再按 priority 降序，最后 id 升序保持稳定
     selected.sort(key=lambda e: (not e.get("always_on"), -int(e.get("priority") or 0), e.get("id") or 0))
     # 预算截断（按正文字符数粗略估算）
@@ -842,6 +985,137 @@ def recall_lore(scope: str, scan_text: str, *, budget_chars: Optional[int] = Non
     if diag is not None:
         diag["lore"] = hit_log
     return selected
+
+
+def pick_spontaneous_lore(scope: str, *, scene_scan: str = "", query_vec: Optional[list[float]] = None,
+                          exclude_ids: Optional[set] = None, min_priority: int = 1,
+                          cooldown_sec: float = 86400.0, now: Optional[float] = None) -> Optional[dict]:
+    """主动召回选择器：从「非常驻、够重要、最近没被主动提过」的条目里挑一条，供 AI 主动讲述。
+    与 recall_lore 反着来——不依赖用户输入匹配，而是挑「该浮现却长期沉底」的设定/回忆。
+    相关性优先级：关键词命中当前场景 > 语义贴近 > 休眠时长（都没相关也会捞最久没提的，让背景终能讲出）。
+    返回单条 dict（不含 embedding）或 None。"""
+    if _conn is None:
+        return None
+    now = now if now is not None else time.time()
+    exclude_ids = exclude_ids or set()
+    scan = scene_scan or ""
+    _clause, _params = _scope_in_clause(scope)
+    rows = [_lore_row_to_dict(r, keep_embedding=True) for r in
+            _conn.execute(f"SELECT * FROM lore WHERE {_clause} AND always_on=0", _params).fetchall()]
+    cands = []
+    for e in rows:
+        if e.get("id") in exclude_ids:
+            continue
+        if int(e.get("priority") or 0) < min_priority:
+            continue
+        if now - float(e.get("last_surfaced") or 0) < cooldown_sec:
+            continue   # 还在冷却，避免反复讲同一段
+        cands.append(e)
+    if not cands:
+        return None
+
+    def _score(e):
+        kw = 1 if any(k and k in scan for k in (e.get("keys") or [])) else 0
+        sem = 0.0
+        if query_vec is not None:
+            vec = _decode_vec(e.get("embedding"))
+            if vec:
+                sem = _cosine(query_vec, vec)
+        dormancy = now - float(e.get("last_surfaced") or 0)
+        return (kw, round(sem, 3), dormancy)
+
+    cands.sort(key=_score, reverse=True)
+    best = cands[0]
+    best.pop("embedding", None)
+    return best
+
+
+def mark_lore_surfaced(row_id, ts: Optional[float] = None) -> bool:
+    """打主动召回冷却戳：记下这条 lore 刚被主动提起的时间。"""
+    if _conn is None:
+        return False
+    ts = ts if ts is not None else time.time()
+    with _lock:
+        cur = _conn.execute("UPDATE lore SET last_surfaced=? WHERE id=?", (ts, row_id))
+        _conn.commit()
+        return cur.rowcount > 0
+
+
+# ==================== 世界书容器（worldbooks） ====================
+
+def worldbook_scope(book_id) -> str:
+    """世界书 id → lore 表里的 scope 字符串。"""
+    return f"wb:{book_id}"
+
+
+def create_worldbook(name: str, bind_type: str = "none", bind_target: str = "") -> int:
+    """新建一本世界书。bind_type ∈ {'character','user','none'}。返回 id。"""
+    if bind_type not in ("character", "user", "none"):
+        bind_type = "none"
+    now = time.time()
+    with _lock:
+        cur = _conn.execute(
+            "INSERT INTO worldbooks (name, bind_type, bind_target, created_at, updated_at) "
+            "VALUES (?,?,?,?,?)",
+            (name or "未命名世界书", bind_type, bind_target or "", now, now))
+        _conn.commit()
+        return cur.lastrowid
+
+
+def list_worldbooks() -> list[dict]:
+    """列出所有世界书，附带各自的条目数（entry_count）。"""
+    if _conn is None:
+        return []
+    rows = _conn.execute(
+        "SELECT * FROM worldbooks ORDER BY id ASC").fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        scope = worldbook_scope(d["id"])
+        cnt = _conn.execute(
+            "SELECT count(*) FROM lore WHERE scope=?", (scope,)).fetchone()[0]
+        d["entry_count"] = cnt
+        out.append(d)
+    return out
+
+
+def get_worldbook(book_id) -> Optional[dict]:
+    if _conn is None:
+        return None
+    r = _conn.execute(
+        "SELECT * FROM worldbooks WHERE id=?", (book_id,)).fetchone()
+    return dict(r) if r else None
+
+
+def update_worldbook(book_id, *, name=None, bind_type=None, bind_target=None) -> bool:
+    sets, params = [], []
+    if name is not None:
+        sets.append("name=?"); params.append(name)
+    if bind_type is not None:
+        if bind_type not in ("character", "user", "none"):
+            bind_type = "none"
+        sets.append("bind_type=?"); params.append(bind_type)
+    if bind_target is not None:
+        sets.append("bind_target=?"); params.append(bind_target)
+    if not sets:
+        return False
+    sets.append("updated_at=?"); params.append(time.time())
+    params.append(book_id)
+    with _lock:
+        cur = _conn.execute(
+            f"UPDATE worldbooks SET {', '.join(sets)} WHERE id=?", params)
+        _conn.commit()
+        return cur.rowcount > 0
+
+
+def delete_worldbook(book_id) -> bool:
+    """删除一本世界书，连带清掉它名下的全部条目。"""
+    scope = worldbook_scope(book_id)
+    with _lock:
+        _conn.execute("DELETE FROM lore WHERE scope=?", (scope,))
+        cur = _conn.execute("DELETE FROM worldbooks WHERE id=?", (book_id,))
+        _conn.commit()
+        return cur.rowcount > 0
 
 
 # ==================== 完备自动化测试集 ====================

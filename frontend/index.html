@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Chat Bridge</title>
+  <link rel="apple-touch-icon" href="/logo.png">
+  <link rel="icon" href="/logo.png" type="image/png">
+  <link rel="stylesheet" href="css/theme.css">
+  <link rel="stylesheet" href="css/layout.css">
+  <link rel="stylesheet" href="css/chat.css">
+  <link rel="stylesheet" href="css/tabs.css">
+  <link rel="stylesheet" href="css/form.css">
+  <link rel="stylesheet" href="css/components.css">
+</head>
+
+<body>
+  <!-- Level 1: App Root with Tabs -->
+  <div id="app-root" class="app-root">
+    <div class="tab-views">
+      <div id="tab-chats" class="tab-view active">
+        <div class="header">
+          消息
+          <div class="right-btn" id="chats-new-btn" title="新建会话" style="cursor:pointer;">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </div>
+        </div>
+        <div class="content" id="chats-list"></div>
+      </div>
+
+      <div id="tab-contacts" class="tab-view">
+        <div class="header">通讯录</div>
+        <div class="content" id="contacts-list"></div>
+      </div>
+
+      <div id="tab-moments" class="tab-view">
+        <div class="header">朋友圈</div>
+        <div class="content" id="moments-list" style="background: var(--bg-color);"></div>
+      </div>
+
+      <div id="tab-me" class="tab-view">
+        <div class="header">我</div>
+        <div class="content" id="me-list" style="background: var(--bg-color); padding-top: 10px;"></div>
+      </div>
+    </div>
+
+    <nav class="bottom-tab-bar">
+      <div class="tab-btn active" data-target="tab-chats">
+        <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path
+            d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z">
+          </path>
+        </svg>
+        <span>消息</span>
+      </div>
+      <div class="tab-btn" data-target="tab-contacts">
+        <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+          <circle cx="9" cy="7" r="4"></circle>
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+          <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+        </svg>
+        <span>通讯录</span>
+      </div>
+      <div class="tab-btn" data-target="tab-moments">
+        <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"></circle>
+          <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"></polygon>
+        </svg>
+        <span>朋友圈</span>
+      </div>
+      <div class="tab-btn" data-target="tab-me">
+        <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path
+            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
+          </path>
+        </svg>
+        <span>我</span>
+      </div>
+    </nav>
+  </div>
+
+  <!-- Level 2: Detail Views Overlay -->
+  <div id="detail-overlay" class="detail-overlay">
+    <!-- Chat Room -->
+    <div id="chat-room" class="level-2-view">
+      <div class="header">
+        <div class="back-btn" onclick="router.popView()">
+          <svg viewBox="0 0 24 24" width="24" height="24">
+            <path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z" fill="currentColor" />
+          </svg>
+        </div>
+        <div id="chat-room-title" style="flex:1; text-align:center; padding:0 40px;">Chat</div>
+        <div class="right-btn" id="chat-room-settings" title="设置" style="cursor:pointer;">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+            <circle cx="5" cy="12" r="2" />
+            <circle cx="12" cy="12" r="2" />
+            <circle cx="19" cy="12" r="2" />
+          </svg>
+        </div>
+      </div>
+      <div class="chat-content" id="chat-scroll"></div>
+      <button id="chat-jump-bottom" class="btn-jump-bottom">
+        <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2" fill="none"
+          stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19"></line>
+          <polyline points="19 12 12 19 5 12"></polyline>
+        </svg>
+        <span id="jump-btn-text">回到底部</span>
+      </button>
+      <div class="chat-inputbar">
+        <div class="preview-box" id="preview-box">
+          <img id="preview-img" src="">
+          <div class="preview-rm" id="btn-rm-img">&times;</div>
+        </div>
+        <div class="input-row">
+          <button class="img-btn" id="btn-image" title="发送图片">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+          <input type="file" id="file-upload" accept="image/*" style="display:none;">
+          <input type="text" class="chat-input" placeholder="Message..." autocomplete="off">
+          <button class="send-btn">发送</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Generic Settings View -->
+    <div id="settings-view" class="level-2-view">
+      <div class="header">
+        <div class="back-btn" onclick="router.popView()">
+          <svg viewBox="0 0 24 24" width="24" height="24">
+            <path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z" fill="currentColor" />
+          </svg>
+        </div>
+        <div id="settings-view-title" style="flex:1; text-align:center; padding-right:40px;">设置</div>
+      </div>
+      <div class="content" id="settings-view-content" style="background: var(--bg-color); padding: 15px;"></div>
+    </div>
+
+    <!-- 独立的联系人Profile详情页 -->
+    <div id="contact-profile-view" class="level-2-view">
+      <div class="header">
+        <div class="back-btn" onclick="router.popView()">
+          <svg viewBox="0 0 24 24" width="24" height="24">
+            <path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z" fill="currentColor" />
+          </svg>
+        </div>
+        <div style="flex:1;"></div>
+      </div>
+      <div class="content" id="contact-profile-content" style="background: var(--bg-color);"></div>
+    </div>
+
+    <div id="chat-settings-view" class="level-2-view">
+      <div class="header">
+        <div class="back-btn" onclick="router.popView()">
+          <svg viewBox="0 0 24 24" width="24" height="24">
+            <path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z" fill="currentColor" />
+          </svg>
+        </div>
+        <div style="flex:1; text-align:center; padding-right:40px; font-weight:600;">聊天设置</div>
+      </div>
+      <div class="content" id="chat-settings-content" style="background: var(--bg-color);"></div>
+    </div>
+
+    <div id="voice-settings-view" class="level-2-view">
+      <div class="header">
+        <div class="back-btn" onclick="router.popView()">
+          <svg viewBox="0 0 24 24" width="24" height="24">
+            <path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z" fill="currentColor" />
+          </svg>
+        </div>
+        <div style="flex:1; text-align:center; font-weight:600; padding-right:40px;">语音规则设定</div>
+      </div>
+      <div class="content" id="voice-settings-content" style="background: var(--bg-color);"></div>
+    </div>
+
+    <div id="chat-history-search-view" class="level-2-view">
+      <div class="header">
+        <div class="back-btn" onclick="router.popView()">
+          <svg viewBox="0 0 24 24" width="24" height="24">
+            <path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z" fill="currentColor" />
+          </svg>
+        </div>
+        <div style="flex:1; text-align:center; font-weight:600; padding-right:40px;">查找聊天记录</div>
+      </div>
+      <div class="content" id="chat-history-search-content" style="background: var(--bg-color);"></div>
+    </div>
+
+    <div id="generic-editor-view" class="level-2-view">
+      <div class="header">
+        <div class="back-btn" onclick="router.popView()">
+          <svg viewBox="0 0 24 24" width="24" height="24">
+            <path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z" fill="currentColor" />
+          </svg>
+        </div>
+        <div id="editor-title" style="flex:1; text-align:center; font-weight:600;">编辑</div>
+        <div class="right-btn" id="editor-save-btn" style="color:var(--active-color); cursor:pointer;">保存</div>
+      </div>
+      <div class="content" id="editor-content" style="background: var(--bg-color); padding: 15px;"></div>
+    </div>
+
+    <div id="generic-panel-view" class="level-2-view">
+      <div class="header">
+        <div class="back-btn" onclick="router.popView()">
+          <svg viewBox="0 0 24 24" width="24" height="24">
+            <path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z" fill="currentColor" />
+          </svg>
+        </div>
+        <div id="panel-title" style="flex:1; text-align:center; font-weight:600; padding-right:40px;">面板</div>
+      </div>
+      <div class="content" id="panel-content" style="background: var(--bg-color); padding: 15px;"></div>
+    </div>
+
+    <div id="chat-multiselect-view" class="level-2-view">
+      <div class="header">
+        <div class="back-btn" onclick="router.popView()">
+          <svg viewBox="0 0 24 24" width="24" height="24">
+            <path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z" fill="currentColor" />
+          </svg>
+        </div>
+        <div style="flex:1; text-align:center; font-weight:600;">发起聊天</div>
+        <div class="right-btn" id="cms-confirm-btn"
+          style="color:var(--active-color); cursor:pointer; opacity:0.4; pointer-events:none; transition: opacity 0.2s;">
+          确定</div>
+      </div>
+      <div class="content" id="chat-multiselect-content" style="background: var(--bg-color);"></div>
+    </div>
+
+    <div id="user-profiles-view" class="level-2-view">
+      <div class="header">
+        <div class="back-btn" onclick="router.popView()">
+          <svg viewBox="0 0 24 24" width="24" height="24">
+            <path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z" fill="currentColor" />
+          </svg>
+        </div>
+        <div style="flex:1; text-align:center; font-weight:600;">我的分身</div>
+      </div>
+      <div class="content" id="user-profiles-content" style="background: var(--bg-color);"></div>
+    </div>
+
+    <div id="engine-settings-view" class="level-2-view">
+      <div class="header">
+        <div class="back-btn" onclick="router.popView()">
+          <svg viewBox="0 0 24 24" width="24" height="24">
+            <path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z" fill="currentColor" />
+          </svg>
+        </div>
+        <div style="flex:1; text-align:center; font-weight:600;" id="engine-settings-title">设置</div>
+      </div>
+      <div class="content" id="engine-settings-content" style="background: var(--bg-color);"></div>
+    </div>
+
+    <div id="engine-settings-view" class="level-2-view">
+      <div class="header">
+        <div class="back-btn" onclick="router.popView()">
+          <svg viewBox="0 0 24 24" width="24" height="24">
+            <path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z" fill="currentColor" />
+          </svg>
+        </div>
+        <div style="flex:1; text-align:center; font-weight:600;">引擎与网络</div>
+        <div class="right-btn" id="es-save-btn" style="color:var(--active-color); cursor:pointer;">保存</div>
+      </div>
+      <div class="content" id="engine-settings-content" style="background: var(--bg-color);"></div>
+    </div>
+
+    <div id="ui-settings-view" class="level-2-view">
+      <div class="header">
+        <div class="back-btn" onclick="router.popView()">
+          <svg viewBox="0 0 24 24" width="24" height="24">
+            <path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z" fill="currentColor" />
+          </svg>
+        </div>
+        <div style="flex:1; text-align:center; font-weight:600;">界面与通用</div>
+      </div>
+      <div class="content" id="ui-settings-content" style="background: var(--bg-color);"></div>
+    </div>
+
+    <div id="plugin-manager-view" class="level-2-view">
+      <div class="header">
+        <div class="back-btn" onclick="router.popView()">
+          <svg viewBox="0 0 24 24" width="24" height="24">
+            <path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z" fill="currentColor" />
+          </svg>
+        </div>
+        <div style="flex:1; text-align:center; padding-right:40px; font-weight:600;">工具箱 (Plugins)</div>
+      </div>
+      <div class="content" id="plugin-manager-content" style="background: var(--bg-color);"></div>
+    </div>
+
+    <!-- 全局世界书管理：列表 -->
+    <div id="worldbooks-view" class="level-2-view">
+      <div class="header">
+        <div class="back-btn" onclick="router.popView()">
+          <svg viewBox="0 0 24 24" width="24" height="24">
+            <path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z" fill="currentColor" />
+          </svg>
+        </div>
+        <div style="flex:1; text-align:center; padding-right:40px; font-weight:600;">全局世界书</div>
+      </div>
+      <div class="content" id="worldbooks-content" style="background: var(--bg-color);"></div>
+    </div>
+
+    <!-- 全局世界书管理：单本详情 + 条目（在列表之后，叠加在其上） -->
+    <div id="worldbook-detail-view" class="level-2-view">
+      <div class="header">
+        <div class="back-btn" onclick="router.popView()">
+          <svg viewBox="0 0 24 24" width="24" height="24">
+            <path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z" fill="currentColor" />
+          </svg>
+        </div>
+        <div style="flex:1; text-align:center; padding-right:40px; font-weight:600;">世界书详情</div>
+      </div>
+      <div class="content" id="worldbook-detail-content" style="background: var(--bg-color); padding: 0 12px;"></div>
+    </div>
+
+    <!-- 聊天设置 → 本会话世界书管理 -->
+    <div id="chat-worldbooks-view" class="level-2-view">
+      <div class="header">
+        <div class="back-btn" onclick="router.popView()">
+          <svg viewBox="0 0 24 24" width="24" height="24">
+            <path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z" fill="currentColor" />
+          </svg>
+        </div>
+        <div style="flex:1; text-align:center; padding-right:40px; font-weight:600;">世界书管理</div>
+      </div>
+      <div class="content" id="chat-worldbooks-content" style="background: var(--bg-color);"></div>
+    </div>
+
+  </div>
+
+  <div id="vconsole-fab" class="vconsole-fab" title="系统终端">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+      <polyline points="4 17 10 11 4 5"></polyline>
+      <line x1="12" y1="19" x2="20" y2="19"></line>
+    </svg>
+  </div>
+  <div id="vconsole-panel" class="vconsole-panel">
+    <div class="vc-header">
+      <span style="font-weight:bold;color:#fff;">[ 终端控制台 ]</span>
+      <div>
+        <span id="vc-clear" style="margin-right:15px; cursor:pointer;">清屏</span>
+        <span id="vc-close" style="cursor:pointer; color:#ff3b30;">✕ 关闭</span>
+      </div>
+    </div>
+    <div class="vc-body" id="vc-body">
+      <div style="color:#0f0;">[Frontend] vConsole initialized.</div>
+      <div style="color:#888;">[System] 等待后端日志接入...</div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+
+</html>

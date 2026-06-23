@@ -1,0 +1,75 @@
+/* Contacts */
+.contact-group-title {
+  padding: 6px 15px;
+  background: var(--bg-color);
+  font-size: 13px;
+  color: var(--text-secondary);
+  font-weight: bold;
+}
+
+/* Moments */
+.moment-card {
+  background: var(--list-bg);
+  padding: 15px;
+  margin-bottom: 10px;
+  border-top: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+}
+.moment-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.moment-header .avatar {
+  width: 40px; height: 40px; border-radius: 4px; margin-right: 12px;
+}
+.moment-header .info .name {
+  color: var(--active-color);
+  font-weight: bold;
+}
+.moment-content {
+  font-size: 15px;
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+.moment-time {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* Me / Settings */
+.settings-group {
+  margin-bottom: 20px;
+  border-top: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+}
+.settings-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px;
+  background: var(--list-bg);
+  border-bottom: 1px solid var(--border-color);
+  cursor: pointer;
+}
+.settings-item:last-child {
+  border-bottom: none;
+}
+.settings-item:active {
+  background: var(--list-active);
+}
+.settings-label {
+  font-size: 16px;
+}
+.settings-value {
+  font-size: 15px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+}
+.settings-value::after {
+  content: '›';
+  font-size: 20px;
+  margin-left: 8px;
+  color: rgba(255, 255, 255, 0.2);
+}

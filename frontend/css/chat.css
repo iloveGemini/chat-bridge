@@ -1,0 +1,113 @@
+/* Chat View Specific Styles */
+.chat-content {
+  padding: 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.msg {
+  display: flex;
+  flex-direction: column;
+  max-width: 85%;
+}
+
+.msg-user {
+  align-self: flex-end;
+}
+
+.msg-ai {
+  align-self: flex-start;
+}
+
+.msg-bubble {
+  padding: 12px 16px;
+  border-radius: 20px;
+  font-size: 15px;
+  line-height: 1.5;
+  word-wrap: break-word;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.msg-user .msg-bubble {
+  background: var(--user-bubble-bg, var(--active-color));
+  color: var(--user-text, #fff);
+  border-bottom-right-radius: 4px;
+  box-shadow: var(--shadow);
+}
+
+.msg-ai .msg-bubble {
+  background: var(--ai-bubble-bg, var(--surface));
+  color: var(--ai-text, var(--text-color));
+  border-bottom-left-radius: 4px;
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow);
+}
+
+/* 多气泡模式：旁白与正文同属一条 AI 消息 */
+.msg-multi { gap: 0; }
+
+/* 聊天输入栏 */
+.chat-inputbar {
+  flex-shrink: 0;
+  background: var(--surface);
+  border-top: 1px solid var(--border-color);
+  padding: 8px 12px;
+  padding-bottom: calc(8px + env(safe-area-inset-bottom));
+}
+.chat-inputbar .input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.chat-input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 15px;
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  font-size: 15px;
+  outline: none;
+  background: var(--input-bg);
+  color: var(--text-color);
+}
+.send-btn {
+  flex-shrink: 0;
+  padding: 0 16px;
+  height: 38px;
+  background: var(--active-color);
+  color: #fff;
+  border: none;
+  border-radius: 20px;
+  font-size: 15px;
+  font-weight: bold;
+  cursor: pointer;
+}
+.send-btn:active { opacity: 0.8; }
+.send-btn.generating { background: var(--status-off); }
+
+.msg-time {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 6px;
+  align-self: flex-end;
+}
+
+.msg-ai .msg-time {
+  align-self: flex-start;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* markdown reset */
+.msg-bubble p { margin-bottom: 8px; }
+.msg-bubble p:last-child { margin-bottom: 0; }
+.msg-bubble pre { background: rgba(0,0,0,0.3); padding: 10px; border-radius: 8px; overflow-x: auto; margin-top: 8px;}
+.msg-bubble code { font-family: monospace; }
+

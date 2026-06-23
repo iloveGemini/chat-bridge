@@ -1,0 +1,213 @@
+/* 主题变量由 css/theme.css 统一提供（含 --bg-color 等别名） */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: var(--font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif);
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  overflow: hidden;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+}
+
+/* Level 1 */
+.app-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}
+
+.tab-views {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-color);
+}
+
+.tab-view {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: none;
+  flex-direction: column;
+}
+
+.tab-view.active {
+  display: flex;
+}
+
+.header {
+  height: 50px;
+  background: var(--header-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  position: relative;
+  border-bottom: 1px solid var(--border-color);
+  z-index: 10;
+}
+
+.content {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Bottom Tab Bar */
+.bottom-tab-bar {
+  height: 60px;
+  background: var(--tab-bg);
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  flex-shrink: 0;
+  justify-content: space-around;
+  align-items: center;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.tab-btn {
+  text-align: center;
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.2s;
+}
+
+.tab-btn svg {
+  width: 24px;
+  height: 24px;
+  margin-bottom: 3px;
+  stroke: currentColor;
+  fill: none;
+  transition: transform 0.2s;
+}
+
+.tab-btn span {
+  font-size: 11px;
+}
+
+.tab-btn.active {
+  color: var(--active-color);
+}
+
+.tab-btn.active svg {
+  transform: scale(1.1);
+}
+
+/* Level 2: Detail Overlay */
+.detail-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  pointer-events: none;
+  z-index: 100;
+}
+
+.detail-view,
+.level-2-view {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: var(--bg-color);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+  pointer-events: none; /* 隐藏时禁止点击穿透 */
+  box-shadow: none; /* 移除常驻阴影 */
+  z-index: 500;
+}
+
+.detail-view.show,
+.level-2-view.show {
+  transform: translateX(0);
+  pointer-events: auto;
+  box-shadow: -4px 0 20px rgba(0,0,0,0.15); /* 仅在侧滑出来时显示阴影 */
+}
+
+/* Generic List Item */
+.list-item {
+  display: flex;
+  padding: 12px 15px;
+  border-bottom: 1px solid var(--border-color);
+  cursor: pointer;
+  align-items: center;
+  background: var(--list-bg);
+  transition: background 0.2s;
+}
+
+.list-item:active {
+  background: var(--list-active);
+}
+
+.avatar {
+  width: 45px; height: 45px;
+  background: #333;
+  border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  color: white; font-weight: bold; font-size: 18px;
+  margin-right: 12px;
+}
+
+.info { flex: 1; overflow: hidden; }
+.info .name { font-size: 16px; margin-bottom: 4px; color: var(--text-color); }
+.info .msg { font-size: 14px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* View Specific */
+.back-btn {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 50px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none; border: none; 
+  color: var(--text-color);
+  cursor: pointer;
+  z-index: 10;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.right-btn {
+  position: absolute;
+  right: 15px;
+  font-weight: bold;
+}
+
+.bottom-bar {
+  display: flex;
+  padding: 10px;
+  background: var(--tab-bg);
+  border-top: 1px solid var(--border-color);
+  padding-bottom: calc(10px + env(safe-area-inset-bottom));
+}
+
+.chat-input {
+  flex: 1;
+  padding: 10px 15px;
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
+  font-size: 15px;
+  outline: none;
+  background: var(--bg-color);
+  color: var(--text-color);
+}
+
+.send-btn {
+  margin-left: 10px;
+  padding: 0 16px;
+  background: var(--active-color);
+  color: #fff;
+  border: none;
+  border-radius: 20px;
+  font-size: 15px;
+  font-weight: bold;
+  cursor: pointer;
+}

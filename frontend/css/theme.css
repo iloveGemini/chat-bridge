@@ -1,0 +1,104 @@
+/* ============================================================
+   统一主题系统（从旧 app/styles.css 迁移）
+   同时提供「旧变量名」(--bg/--surface/--text/--user-bubble ...)
+   和「新前端变量名」(--bg-color/--active-color/--text-color ...)
+   两套别名，让旧模块代码与新四标签布局共用一套主题。
+   ============================================================ */
+
+:root {
+  --bg: #f5f5f0;
+  --surface: #ffffff;
+  --border: rgba(0, 0, 0, 0.06);
+  --text: #2d2d2d;
+  --text-secondary: #8e8e93;
+  --text-faint: #c7c7cc;
+  --user-bubble: #d4a574;
+  --user-text: #ffffff;
+  --ai-bubble: #ffffff;
+  --ai-text: #2d2d2d;
+  --user-bubble-bg: var(--user-bubble);
+  --ai-bubble-bg: var(--ai-bubble);
+  --input-bg: #ffffff;
+  --send-bg: #2d2d2d;
+  --send-color: #ffffff;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --radius: 20px;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --status-ok: #34c759;
+  --status-off: #ff3b30;
+  --menu-bg: rgba(255, 255, 255, 0.88);
+}
+
+[data-theme="dark"] {
+  --bg: #0d0d15;
+  --surface: #1a1a2e;
+  --border: rgba(255, 255, 255, 0.08);
+  --text: #f0f0f0;
+  --text-secondary: #a0a0b0;
+  --text-faint: #555570;
+  --user-bubble: #a78bfa;
+  --user-text: #ffffff;
+  --ai-bubble: #50378B;
+  --ai-text: #ffffff;
+  --input-bg: #1a1a2e;
+  --send-bg: #50378B;
+  --send-color: #ffffff;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --status-ok: #a78bfa;
+  --menu-bg: rgba(26, 26, 46, 0.85);
+}
+
+[data-theme="midnight"] {
+  --bg: #2a2b2d;
+  --surface: rgba(30, 31, 33, 0.92);
+  --border: rgba(119, 134, 175, 0.22);
+  --text: #e6ebf5;
+  --text-secondary: #a1b5d8;
+  --text-faint: #7786af;
+  --user-bubble: #7d5a85;
+  --user-text: #ffffff;
+  --ai-bubble: #345392;
+  --ai-text: #e6ebf5;
+  --input-bg: rgba(42, 43, 45, 0.9);
+  --send-bg: linear-gradient(135deg, #345392, #084a7c);
+  --send-color: #ffffff;
+  --shadow: 0 10px 30px rgba(8, 74, 124, 0.4);
+  --status-ok: #a1b5d8;
+  --menu-bg: rgba(30, 31, 33, 0.95);
+  --font: "Songti SC", "Noto Serif SC", "STSong", "SimSun", -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+[data-theme="paper"] {
+  --bg: #f6f6f6;
+  --surface: rgba(255, 255, 255, 0.85);
+  --border: rgba(220, 220, 220, 0.8);
+  --text: #646464;
+  --text-secondary: #8f7e72;
+  --text-faint: #a2a2a2;
+  --user-bubble: #8f7e72;
+  --user-text: #646464;
+  --ai-bubble: #f0f0f0;
+  --ai-text: #646464;
+  --user-bubble-bg: #ffffff;
+  --ai-bubble-bg: #f0f0f0;
+  --input-bg: #f2f2f2;
+  --send-bg: #8f7e72;
+  --send-color: #ffffff;
+  --shadow: 0 10px 30px rgba(221, 221, 221, 0.4);
+  --status-ok: #8f7e72;
+  --menu-bg: rgba(255, 255, 255, 0.92);
+  --font: "Songti SC", "Noto Serif SC", "STSong", "SimSun", -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* ---------- 新前端布局用的变量别名（映射到上面的主题变量） ---------- */
+:root,
+[data-theme] {
+  --bg-color: var(--bg);
+  --text-color: var(--text);
+  --tab-bg: var(--surface);
+  --header-bg: var(--surface);
+  --list-bg: var(--surface);
+  --list-active: var(--bg);
+  --border-color: var(--border);
+  --active-color: var(--user-bubble);
+}
