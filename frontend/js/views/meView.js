@@ -43,7 +43,7 @@ class MeView {
         </div>
       </div>
 
-      <div style="padding: 15px 20px 5px; font-weight: bold; font-size: 13px; color: var(--text-secondary); text-transform:uppercase;">我的平行分身</div>
+      <div style="padding: 15px 20px 5px; font-weight: bold; font-size: 13px; color: var(--text-secondary); text-transform:uppercase;"></div>
       <div class="profile-scroll-row" id="me-profiles-row">
         ${this.users.map(u => `
           <div class="profile-item-col" data-key="${escHtml(u.key)}">
@@ -59,26 +59,26 @@ class MeView {
 
       <div class="ios-group" style="margin-top:20px;">
         <div class="ios-item" id="me-lore">
-          <span class="label"><span style="color:var(--text-secondary);display:flex;">${ICONS.book}</span> 全局世界书管理</span>
+          <span class="label"><span style="color:var(--text-secondary);display:flex;">${ICONS.book}</span> 世界书</span>
           <span class="val"></span>
         </div>
         <div class="ios-item" id="me-presets">
-          <span class="label"><span style="color:var(--text-secondary);display:flex;">${ICONS.branch}</span> 对话执行预设</span>
+          <span class="label"><span style="color:var(--text-secondary);display:flex;">${ICONS.branch}</span> 预设</span>
           <span class="val"></span>
         </div>
         <div class="ios-item" id="me-memory">
-          <span class="label"><span style="color:var(--text-secondary);display:flex;">${ICONS.savePoint}</span> 全局记忆总览</span>
+          <span class="label"><span style="color:var(--text-secondary);display:flex;">${ICONS.savePoint}</span> 全局记忆</span>
           <span class="val">进入</span>
         </div>
       </div>
 
       <div class="ios-group">
         <div class="ios-item" id="me-engine">
-          <span class="label"><span style="color:var(--text-secondary);display:flex;">${ICONS.search}</span> 大模型引擎网络</span>
+          <span class="label"><span style="color:var(--text-secondary);display:flex;">${ICONS.search}</span> 模型引擎</span>
           <span class="val">配置</span>
         </div>
         <div class="ios-item" id="me-ui">
-          <span class="label"><span style="color:var(--text-secondary);display:flex;">${ICONS.photo}</span> 界面与通用设置</span>
+          <span class="label"><span style="color:var(--text-secondary);display:flex;">${ICONS.photo}</span> 通用设置</span>
           <span class="val">配置</span>
         </div>
       </div>

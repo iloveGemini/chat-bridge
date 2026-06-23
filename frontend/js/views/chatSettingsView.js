@@ -192,7 +192,7 @@ class ChatSettingsView {
     const longMem = document.getElementById('cs-long-memory');
     if (longMem) {
       longMem.onclick = () => {
-        import('../modals.js').then(m => m.openMemoryPanel(sid));
+        import('./memoryManagerView.js').then(m => m.memoryManagerView.open(sid));
       };
     }
     

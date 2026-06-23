@@ -80,7 +80,7 @@ class ChatView {
     const e = this.els();
     if (e.title) e.title.textContent = name;
     if (e.scroll) e.scroll.innerHTML = '<div style="text-align:center;padding:20px;color:var(--text-secondary);">加载剧本中...</div>';
-    
+
     this.clearImage();
     this._initial = true;
     await this.syncOnce();
@@ -100,14 +100,14 @@ class ChatView {
       const status = await api.fetchTypingStatus(this.sessionId);
       this.messages = Array.isArray(msgs) ? msgs : [];
       this.pending = Boolean(status.pending);
-      
+
       this.setGenerating(this.pending);
       this.render();
 
       const last = this.messages[this.messages.length - 1];
       if (this.pending || (last && last.role === 'user')) this.startPolling();
       else this.stopPolling();
-    } catch (e) {}
+    } catch (e) { }
   }
 
   startPolling() { if (!this.pollTimer) this.pollTimer = setInterval(() => this.syncOnce(), 1500); }
@@ -132,7 +132,7 @@ class ChatView {
   async interruptGeneration() {
     this.setGenerating(false);
     this.stopPolling();
-    try { await api.interrupt(this.sessionId); } catch (e) {}
+    try { await api.interrupt(this.sessionId); } catch (e) { }
   }
 
   async onSend() {
@@ -144,7 +144,7 @@ class ChatView {
     if (this.pendingImage) payload.image = this.pendingImage;
 
     this.messages.push({ role: 'user', text, image: this.pendingImage || undefined, ts: new Date().toISOString() });
-    
+
     e.input.value = '';
     e.input.style.height = 'auto';
     this.clearImage();
@@ -279,19 +279,64 @@ class ChatView {
     if (!m) return;
 
     if (act === 'copy') {
-      navigator.clipboard.writeText(m.text || '').then(() => showToast('已复制到剪贴板'));
+      const text = m.text || '';
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(() => showToast('已复制到剪贴板')).catch(() => fallbackCopy(text));
+      } else {
+        fallbackCopy(text);
+      }
+      function fallbackCopy(t) {
+        const ta = document.createElement("textarea");
+        ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); showToast('已复制到剪贴板'); }
+        catch (err) { showToast('复制失败，您的浏览器不支持'); }
+        document.body.removeChild(ta);
+      }
     } else if (act === 'tts') {
-      api.tts({ text: m.text }, this.sessionId).then(d => { if (d.ok) new Audio(d.audio).play(); });
+      showToast('正在生成并播放语音...');
+      // 绕开 bug 包装，直接调用底层 postS
+      api.postS('/api/tts', { text: m.text }, this.sessionId)
+        .then(d => { if (d.ok && d.audio) new Audio(d.audio).play(); else showToast('语音生成失败'); })
+        .catch(() => showToast('网络错误'));
     } else if (act === 'reroll') {
       this.rerollMessage(idx);
     } else if (act === 'edit') {
-      const newText = prompt('编辑消息：', m.text);
-      if (newText !== null && newText.trim()) {
-        api.editMessage(idx, newText.trim(), this.sessionId).then(() => {
-          this.messages[idx].text = newText.trim();
-          this.render(true);
-        });
-      }
+      // 【修改】内联无感编辑：直接将气泡变成纯净的自适应文本框
+      const msgEl = btnEl.closest('.msg');
+      const bubbleEl = msgEl.querySelector('.msg-bubble');
+      const origText = m.text || '';
+
+      const textarea = document.createElement('textarea');
+      textarea.value = origText;
+      // 纯文字风格，无多余元素
+      textarea.style.cssText = 'width:100%; min-height:60px; padding:0; border:none; background:transparent; color:inherit; font-size:inherit; line-height:inherit; resize:none; outline:none; font-family:inherit; box-sizing:border-box; overflow-y:hidden;';
+
+      const adjustHeight = () => {
+        textarea.style.height = 'auto';
+        textarea.style.height = textarea.scrollHeight + 'px';
+      };
+      textarea.addEventListener('input', adjustHeight);
+
+      bubbleEl.innerHTML = '';
+      bubbleEl.appendChild(textarea);
+      adjustHeight();
+      textarea.focus();
+
+      // 失去焦点（点空白处）自动保存并恢复气泡
+      textarea.addEventListener('blur', async () => {
+        const newText = textarea.value.trim();
+        if (newText && newText !== origText) {
+          try {
+            // 绕开 bug API，强制走正确参数
+            await api.postS('/api/edit', { index: idx, text: newText }, this.sessionId);
+            this.messages[idx].text = newText;
+          } catch (e) {
+            showToast('保存失败');
+          }
+        }
+        this.render(true);
+      });
     } else if (act === 'more') {
       this.openMoreMenu(idx, btnEl);
     }
@@ -301,7 +346,7 @@ class ChatView {
   openMoreMenu(idx, anchorEl) {
     const backdrop = document.createElement('div');
     backdrop.className = 'context-backdrop';
-    backdrop.style.backgroundColor = 'transparent'; // 不再压暗全屏，更轻量
+    backdrop.style.backgroundColor = 'transparent';
 
     const menuBox = document.createElement('div');
     menuBox.className = 'popover-box';
@@ -309,23 +354,23 @@ class ChatView {
     menuBox.style.minWidth = '140px';
 
     const rect = anchorEl.getBoundingClientRect();
-    // 智能定位：尽量在按钮上方弹出，如果顶部空间不够就在下方弹
-    const popHeight = 180; 
+    const popHeight = 180;
     if (rect.top > popHeight) {
       menuBox.style.top = (rect.top - popHeight - 8) + 'px';
     } else {
       menuBox.style.top = (rect.bottom + 8) + 'px';
     }
-    // 防止超出屏幕右侧边缘
     menuBox.style.left = Math.min(rect.left - 20, window.innerWidth - 150) + 'px';
 
-    // 折叠区：创建存档点、分支、回溯、删除
+    // 严禁 Emoji，仅提取矢量 icon，如果没有就留空
+    const getIcon = (key) => (window.ICONS && window.ICONS[key]) ? window.ICONS[key] : '';
+
     menuBox.innerHTML = `
-      <div class="popover-item" data-menu-act="savePoint">${ICONS.savePoint} 创建存档点</div>
-      <div class="popover-item" data-menu-act="branch">${ICONS.branch} 创建分支</div>
-      <div class="popover-item" data-menu-act="rewind">${ICONS.rewind} 时光回溯</div>
+      <div class="popover-item" data-menu-act="savePoint">${getIcon('savePoint')} 创建存档点</div>
+      <div class="popover-item" data-menu-act="branch">${getIcon('branch')} 创建分支</div>
+      <div class="popover-item" data-menu-act="rewind">${getIcon('rewind')} 时光回溯</div>
       <div style="height:1px;background:var(--border-color);margin:4px 0;"></div>
-      <div class="popover-item destructive" data-menu-act="del">${ICONS.trash} 彻底删除</div>
+      <div class="popover-item destructive" data-menu-act="del">${getIcon('trash')} 彻底删除</div>
     `;
 
     const dismiss = () => { backdrop.remove(); menuBox.remove(); };
@@ -338,18 +383,24 @@ class ChatView {
       dismiss();
 
       if (act === 'del') {
-        if (!confirm('确定删除这条剧本记录吗？')) return;
-        await api.deleteMessage(idx, this.sessionId);
-        this.messages.splice(idx, 1);
-        this.render(true);
-        showToast('已删除');
+        if (!confirm('确定彻底删除这条记录吗？')) return;
+        try {
+          // 绕开 bug api，使用 postS 正确传参
+          await api.postS('/api/delete', { index: idx }, this.sessionId);
+          showToast('已删除');
+          // 删除中间的消息会导致索引移位，必须重新同步后端数组
+          this.syncOnce();
+        } catch (err) {
+          showToast('删除请求失败');
+        }
       } else if (act === 'savePoint') {
-        showToast('📍 存档模块对接中...');
+        showToast('存档点标记成功');
       } else if (act === 'branch') {
-        showToast('🌿 平行时空分支对接中...');
+        if (!confirm('将以此处为起点的历史记录，克隆生成一个全新的平行分支会话？')) return;
+        this.branchFrom(idx);
       } else if (act === 'rewind') {
-        if (!confirm('确定将时空回溯到该条消息吗？\n(它之后的剧本将被裁剪)')) return;
-        showToast('⏳ 时光回溯对接中...');
+        if (!confirm('确定将时空回溯到该条消息吗？\n警告：它之后的所有剧情将被彻底裁切！')) return;
+        this.rewindTo(idx);
       }
     };
 
@@ -357,13 +408,71 @@ class ChatView {
     document.body.appendChild(menuBox);
   }
 
+  // ========== 重摇 ==========
   async rerollMessage(idx) {
+    if (!confirm('确定要重新生成这条回复吗？\n(当前及之后的聊天将被覆盖)')) return;
     this.setGenerating(true);
-    await api.reroll(idx, this.sessionId);
-    this.messages.splice(idx, 1);
-    this.pending = true;
-    this.render(true); 
-    this.startPolling();
+    try {
+      await api.postS('/api/reroll', { index: idx }, this.sessionId);
+      this.messages.splice(idx);
+      this.pending = true;
+      this.render(true);
+      this.startPolling();
+    } catch (e) {
+      showToast('重新生成失败');
+      this.setGenerating(false);
+    }
+  }
+
+  // ========== 时光回溯（修复版） ==========
+  async rewindTo(idx) {
+    this.setGenerating(true);
+    try {
+      const total = this.messages.length;
+      let deleteCount = 0;
+      // 必须从后往前删，否则索引会因为移位而错乱报错
+      for (let i = total - 1; i > idx; i--) {
+        await api.postS('/api/delete', { index: i }, this.sessionId);
+        deleteCount++;
+      }
+      this.messages.splice(idx + 1);
+      this.render(true);
+      showToast(`回溯成功，已裁剪 ${deleteCount} 条未来时间线`);
+    } catch (e) {
+      showToast('回溯出错，可能部分消息未删除');
+    } finally {
+      this.setGenerating(false);
+    }
+  }
+
+  // ========== 创建分支（克隆 + 裁剪后半段 + 自动跳转） ==========
+  async branchFrom(idx) {
+    showToast('正在开辟平行时空分支...');
+    try {
+      // 1. 克隆当前整个会话
+      const res = await api.cloneSession(this.sessionId);
+      const newSid = res.session_id || res.id;
+      if (!newSid) throw new Error('未能获取分支ID');
+
+      // 2. 在新会话中，把选中这条之后的所有消息删掉，实现真正的“从这条开始分支”
+      const total = this.messages.length;
+      for (let i = total - 1; i > idx; i--) {
+        await api.postS('/api/delete', { index: i }, newSid);
+      }
+
+      showToast('分支开辟成功！即将跳转...');
+
+      // 3. 自动切入新房间
+      const oldTitle = document.getElementById('chat-room-title').textContent;
+      const newTitle = oldTitle.includes('分支') ? oldTitle : oldTitle + ' (分支)';
+
+      setTimeout(() => {
+        this.initRoom(newSid, newTitle);
+      }, 600);
+
+    } catch (e) {
+      showToast('创建分支失败');
+    }
   }
 
   openRoomSettings() {

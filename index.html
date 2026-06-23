@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Chat Engine</title>
+  <link rel="apple-touch-icon" href="/logo.png">
+  <link rel="icon" href="/logo.png" type="image/png">
+  <link rel="apple-touch-icon" href="/logo.png">
+  <link rel="stylesheet" href="app/styles.css">
+</head>
+
+<body>
+
+  <div class="topbar">
+    <div class="topbar-left">
+      <button class="topbar-btn" id="btn-drawer-left" title="会话列表">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"
+          stroke-linecap="round">
+          <line x1="4" y1="6" x2="20" y2="6" />
+          <line x1="4" y1="12" x2="20" y2="12" />
+          <line x1="4" y1="18" x2="20" y2="18" />
+        </svg>
+      </button>
+    </div>
+    <div class="topbar-center">
+      <div class="topbar-title" id="topbar-title">Chat Engine</div>
+      <div class="topbar-status">
+        <span class="status-dot" id="status-dot"></span>
+        <span id="status-text">connecting...</span>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <button class="topbar-btn" id="btn-drawer-right" title="设置">
+        <img id="topbar-avatar" src="/logo.png" style="width:22px;height:22px;border-radius:50%;object-fit:cover;">
+      </button>
+    </div>
+  </div>
+
+  <div class="chat-scroll" id="chat-scroll">
+    <div class="chat-container" id="chat">
+      <div class="welcome" id="welcome">
+        <div class="welcome-pulse">S Y S T E M   O N L I N E</div>
+        <div class="welcome-title">「 尚未建立信号连接 」</div>
+        <div class="welcome-hint">Frequency open. Send your first whisper.</div>
+      </div>
+    </div>
+    <div class="msg typing" id="typing">
+      <div class="typing-dots">
+        <div class="typing-dot"></div>
+        <div class="typing-dot"></div>
+        <div class="typing-dot"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="bottom-bar">
+    <div class="input-row">
+      <button class="btn-plus" id="btn-image" title="发送图片">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round">
+          <line x1="12" y1="5" x2="12" y2="19" />
+          <line x1="5" y1="12" x2="19" y2="12" />
+        </svg>
+      </button>
+      <input type="file" id="file-upload" accept="image/*" style="display:none;">
+
+      <div class="input-wrap">
+        <div class="preview-box" id="preview-box">
+          <img id="preview-img" src="">
+          <div class="preview-rm" id="btn-rm-img">&times;</div>
+        </div>
+        <textarea id="input" placeholder="Message..." rows="1"></textarea>
+      </div>
+
+      <button class="btn-send" id="btn-send" title="Send">
+        <svg viewBox="0 0 24 24">
+          <path
+            d="M3.4 20.4l17.45-7.48a1 1 0 000-1.84L3.4 3.6a.993.993 0 00-1.39.91L2 9.12c0 .5.37.93.87.99L17 12 2.87 13.88c-.5.07-.87.5-.87 1l.01 4.61c0 .71.73 1.2 1.39.91z" />
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <button id="btn-jump-bottom" class="btn-jump-bottom" onclick="scrollToBottom(true)">
+    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none"
+      stroke-linecap="round" stroke-linejoin="round">
+      <line x1="12" y1="5" x2="12" y2="19"></line>
+      <polyline points="19 12 12 19 5 12"></polyline>
+    </svg>
+    <span id="jump-btn-text">回到底部</span>
+  </button>
+
+  <div class="toast" id="toast"></div>
+
+  <!-- ============ 左侧抽屉：会话列表 ============ -->
+  <div class="drawer-mask" id="mask-left"></div>
+  <div class="drawer drawer-left" id="drawer-left">
+    <div class="drawer-header">
+      <select id="session-filter" class="drawer-select"></select>
+      <button class="drawer-icon-btn" id="btn-new-session" title="新建会话">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"
+          stroke-linecap="round">
+          <line x1="12" y1="5" x2="12" y2="19" />
+          <line x1="5" y1="12" x2="19" y2="12" />
+        </svg>
+      </button>
+    </div>
+    <div class="drawer-list" id="session-list"></div>
+    <div class="drawer-footer">
+      <button class="topbar-btn" id="btn-mode" title="切换模式">
+        <svg id="mode-icon-api" viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+          <path
+            d="M20 18c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z" />
+        </svg>
+        <svg id="mode-icon-cli" viewBox="0 0 24 24" width="20" height="20" fill="currentColor" style="display:none;">
+          <path
+            d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v12zm-2-1h-6v-2h6v2zM7.5 17l-1.41-1.41L8.67 13l-2.59-2.59L7.5 9l4 4-4 4z" />
+        </svg>
+      </button>
+      <button class="topbar-btn" id="btn-tts" title="语音自动读：开/关">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M11 5 6 9H2v6h4l5 4V5z" />
+          <path d="M15.5 8.5a5 5 0 010 7" />
+          <path d="M18.5 5.5a9 9 0 010 13" />
+        </svg>
+      </button>
+      <button class="topbar-btn" id="btn-tts-narration" title="只读台词（跳过括号旁白）">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 11.5a8.38 8.38 0 01-.9 3.8 8.5 8.5 0 01-7.6 4.7 8.38 8.38 0 01-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 01-.9-3.8 8.5 8.5 0 014.7-7.6 8.38 8.38 0 013.8-.9h.5a8.48 8.48 0 018 8v.5z" />
+          <path d="M9 10h6M9 13.5h4" />
+        </svg>
+      </button>
+      <button class="topbar-btn" id="btn-char-manage" title="角色管理">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"
+          stroke-linecap="round">
+          <circle cx="12" cy="8" r="4" />
+          <path d="M4 20c0-4 4-6 8-6s8 2 8 6" />
+        </svg>
+      </button>
+      <button class="topbar-btn" id="btn-clear" title="清空当前对话" style="margin-left:auto;">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8"
+          stroke-linecap="round">
+          <path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6h14" />
+        </svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- ============ 右侧抽屉：设置 ============ -->
+  <div class="drawer-mask" id="mask-right"></div>
+  <div class="drawer drawer-right" id="drawer-right">
+    <div class="drawer-right-header">
+      <img id="rp-avatar" src="/logo.png">
+      <div class="rp-name" id="rp-name">迟宴舟</div>
+      <button class="drawer-icon-btn" id="btn-new-same-char" title="新建同角色会话">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8"
+          stroke-linecap="round">
+          <line x1="12" y1="5" x2="12" y2="19" />
+          <line x1="5" y1="12" x2="19" y2="12" />
+        </svg>
+      </button>
+    </div>
+    <div class="drawer-section-title">聊天设定</div>
+    <div class="drawer-row" id="row-world" data-cat="world"><span>世界设定</span><span class="drawer-row-val"
+        id="val-world">无</span></div>
+    <div class="drawer-row" id="row-user" data-cat="user"><span>用户设定</span><span class="drawer-row-val"
+        id="val-user">无</span></div>
+    <div class="drawer-section-title">高级</div>
+    <div class="drawer-row" id="row-preset" data-cat="preset"><span>预设</span><span class="drawer-row-val"
+        id="val-preset">未应用</span></div>
+    <div class="drawer-row" id="row-theme" data-cat="theme"><span>主题</span><span class="drawer-row-val"
+        id="val-theme">浅色</span></div>
+    <div class="drawer-row" id="row-bubble"><span>气泡模式</span><span class="drawer-row-val" id="val-bubble">关</span></div>
+    <div class="drawer-row" id="row-memory"><span>记忆管理</span><span class="drawer-row-val"
+        style="font-size:11px;opacity:0.5;">查看 / 总结 / 编辑</span></div>
+    <div class="drawer-row" id="row-lore"><span>世界书</span><span class="drawer-row-val"
+        style="font-size:11px;opacity:0.5;">设定 / 触发词</span></div>
+    <div class="drawer-row" id="row-assistant"><span>设定助手</span><span class="drawer-row-val"
+        style="font-size:11px;opacity:0.5;">AI 帮你配置设定</span></div>
+    <div class="drawer-row" id="row-notify-test"><span>测试推送</span><span class="drawer-row-val"
+        style="font-size:11px;opacity:0.5;">给手机发条通知</span></div>
+    <div class="drawer-row" id="row-outreach"><span>主动联系</span><span class="drawer-row-val"
+        style="font-size:11px;opacity:0.5;">角色定时找你</span></div>
+    <div class="drawer-row" id="row-debug"><span>调试日志</span><span class="drawer-row-val"
+        style="font-size:11px;opacity:0.5;">上次请求</span></div>
+    <div class="drawer-section-title">系统配置</div>
+    <div class="drawer-row" id="row-global-config"><span>全局设置</span><span class="drawer-row-val"
+        style="color:var(--user-bubble); font-weight:bold;">API / 记忆参数</span></div>
+  </div>
+
+  <!-- ============ 底部弹层：选择/编辑 ============ -->
+  <div class="sheet-mask" id="mask-sheet"></div>
+  <div class="sheet" id="sheet-select">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title" id="sheet-title">选择</div>
+    <div class="sheet-list" id="sheet-list"></div>
+    <button class="sheet-new-btn" id="sheet-new-btn">+ 新建</button>
+  </div>
+
+  <div class="sheet-mask" id="mask-edit"></div>
+  <div class="sheet" id="sheet-edit">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">编辑</div>
+    <input type="text" id="edit-name" class="sheet-input" placeholder="名称">
+    <div id="edit-avatar-row" style="display:none;">
+      <img id="edit-avatar-preview" src="/logo.png"
+        style="width:56px;height:56px;border-radius:50%;object-fit:cover;margin:8px 0;">
+      <input type="file" id="edit-avatar-file" accept="image/*">
+    </div>
+    <div id="edit-voice-row" style="display:none;">
+      <div class="edit-voice-cap">音色（仅此角色，留默认则用全局）</div>
+      <div class="edit-voice-line">
+        <select id="edit-voice" class="sheet-input"></select>
+        <button type="button" class="edit-voice-try" id="edit-voice-try">试听</button>
+      </div>
+      <div class="edit-voice-knobs">
+        <label>语速 <input type="number" id="edit-voice-speed" min="0.5" max="2" step="0.1" value="1"></label>
+        <label>音调 <input type="number" id="edit-voice-pitch" min="-12" max="12" step="1" value="0"></label>
+      </div>
+    </div>
+    <textarea id="edit-content" class="sheet-textarea" placeholder="内容..."></textarea>
+    <div class="sheet-edit-actions">
+      <button class="edit-btn-cancel" id="edit-delete-btn">删除</button>
+      <button class="edit-btn-save" id="edit-save-btn">保存</button>
+    </div>
+  </div>
+
+  <div class="sheet-mask" id="mask-preset-edit"></div>
+  <div class="sheet" id="sheet-preset-edit" style="max-height:90vh;">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">编辑预设</div>
+    <input type="text" id="preset-name" class="sheet-input" placeholder="预设名称">
+    <div style="overflow-y:auto;flex:1;padding:0 4px;">
+      <div class="sheet-section-label">主提示词 (main)</div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <select id="preset-main-sel" class="sheet-input" style="flex:1;margin:0;"></select>
+        <button class="sheet-edit-pencil" data-slot="main" title="编辑/新建">+ /✎</button>
+      </div>
+      <div class="sheet-section-label">文风 (style)</div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <select id="preset-style-sel" class="sheet-input" style="flex:1;margin:0;"></select>
+        <button class="sheet-edit-pencil" data-slot="style" title="编辑/新建">+ /✎</button>
+      </div>
+      <div class="sheet-section-label">后续提示词 (post)</div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <select id="preset-post-sel" class="sheet-input" style="flex:1;margin:0;"></select>
+        <button class="sheet-edit-pencil" data-slot="post" title="编辑/新建">+ /✎</button>
+      </div>
+    </div>
+    <div class="sheet-edit-actions">
+      <button class="edit-btn-cancel" id="preset-delete-btn">删除</button>
+      <button class="edit-btn-save" id="preset-save-btn">保存</button>
+    </div>
+  </div>
+
+  <div class="sheet-mask" id="mask-global-config"></div>
+  <div class="sheet" id="sheet-global-config"
+    style="max-height:88vh; width:100%; max-width:680px; margin:0 auto; left:0; right:0; border-radius:20px 20px 0 0;">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">全局 API 与记忆参数配置</div>
+    <div style="overflow-y:auto; flex:1; padding:0 6px;">
+
+      <div class="sheet-section-label" style="font-size:13px; font-weight:bold; color:var(--user-bubble);">1. 主聊天 API
+        (api)</div>
+      <input type="text" id="cfg-api-url" class="sheet-input"
+        placeholder="Base URL (例如 http://127.0.0.1:2156/v1 或 https://api.siliconflow.cn/v1)">
+      <input type="password" id="cfg-api-key" class="sheet-input" placeholder="API Key">
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
+        <input type="text" id="cfg-api-model" class="sheet-input" style="margin:0; flex:1;"
+          placeholder="手动输入 或 点击右侧拉取可用模型">
+        <select id="cfg-api-model-sel" class="sheet-input"
+          style="margin:0; width:auto; max-width:130px; display:none;"></select>
+        <button class="sheet-new-btn" id="btn-test-api"
+          style="margin:0; white-space:nowrap; background:var(--user-bubble); color:#fff; font-weight:bold;">测试并拉取</button>
+      </div>
+
+      <div class="sheet-section-label"
+        style="font-size:13px; font-weight:bold; color:var(--user-bubble); margin-top:12px;">2. 独立总结 API (summary_api)
+      </div>
+      <input type="text" id="cfg-sum-url" class="sheet-input" placeholder="Base URL">
+      <input type="password" id="cfg-sum-key" class="sheet-input" placeholder="API Key">
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
+        <input type="text" id="cfg-sum-model" class="sheet-input" style="margin:0; flex:1;" placeholder="总结专用 Model ID">
+        <select id="cfg-sum-model-sel" class="sheet-input"
+          style="margin:0; width:auto; max-width:130px; display:none;"></select>
+        <button class="sheet-new-btn" id="btn-test-sum"
+          style="margin:0; white-space:nowrap; background:var(--user-bubble); color:#fff; font-weight:bold;">测试并拉取</button>
+      </div>
+
+      <div class="sheet-section-label"
+        style="font-size:13px; font-weight:bold; color:var(--user-bubble); margin-top:12px;">3. 向量检索 API (embedding)
+      </div>
+      <label style="font-size:13px; display:flex; align-items:center; gap:8px; margin-bottom:8px; cursor:pointer;">
+        <input type="checkbox" id="cfg-emb-enabled" style="width:16px; height:16px;"> 启用长时记忆 Embedding 向量化入库
+      </label>
+      <input type="text" id="cfg-emb-url" class="sheet-input" placeholder="Base URL">
+      <input type="password" id="cfg-emb-key" class="sheet-input" placeholder="API Key">
+      <input type="text" id="cfg-emb-model" class="sheet-input" placeholder="Embedding Model (如 BAAI/bge-m3)">
+
+      <div class="sheet-section-label"
+        style="font-size:13px; font-weight:bold; color:var(--user-bubble); margin-top:12px;">4. 记忆触发与检索参数 (memory)</div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px;">
+        <div>
+          <div class="sheet-section-label" style="margin-top:0;">附带最近轮数 (recent_rounds)</div>
+          <input type="number" id="cfg-mem-recent" class="sheet-input" style="margin:0;">
+        </div>
+        <div>
+          <div class="sheet-section-label" style="margin-top:0;">每隔几条总结 (summarize_every)</div>
+          <input type="number" id="cfg-mem-every" class="sheet-input" style="margin:0;">
+        </div>
+        <div>
+          <div class="sheet-section-label" style="margin-top:0;">粗筛召回数 (recall_n)</div>
+          <input type="number" id="cfg-mem-recall" class="sheet-input" style="margin:0;">
+        </div>
+        <div>
+          <div class="sheet-section-label" style="margin-top:0;">精筛注入数 (top_k)</div>
+          <input type="number" id="cfg-mem-topk" class="sheet-input" style="margin:0;">
+        </div>
+      </div>
+
+    </div>
+    <div class="sheet-edit-actions">
+      <button class="edit-btn-cancel" id="cfg-cancel-btn">取消</button>
+      <button class="edit-btn-save" id="cfg-save-btn">保存全局配置</button>
+    </div>
+  </div>
+
+  <script src="app/auth.js"></script>
+  <script src="app/core.js"></script>
+  <script src="app/menu.js"></script>
+  <script src="app/drawers.js"></script>
+
+  <!-- 局域网访问口令登录浮层（默认隐藏，401 时弹出） -->
+  <div id="login-overlay" style="display:none;position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.72);
+       backdrop-filter:blur(6px);align-items:center;justify-content:center;">
+    <div style="width:min(86vw,320px);background:#1f1f23;border:1px solid #34343a;border-radius:16px;
+         padding:24px 22px;box-shadow:0 12px 40px rgba(0,0,0,.5);color:#eee;font-family:inherit;">
+      <div style="font-size:17px;font-weight:600;margin-bottom:6px;">🔒 访问口令</div>
+      <div style="font-size:13px;color:#9a9aa2;margin-bottom:16px;line-height:1.5;">此聊天器已加锁，请输入口令继续。</div>
+      <input id="login-pw" type="password" autocomplete="current-password" placeholder="输入口令"
+             onkeydown="if(event.key==='Enter')doLogin()"
+             style="width:100%;box-sizing:border-box;padding:11px 13px;border-radius:10px;border:1px solid #3a3a42;
+             background:#27272c;color:#fff;font-size:15px;outline:none;" />
+      <div id="login-err" style="color:#ff6b6b;font-size:12.5px;min-height:16px;margin:8px 2px 0;"></div>
+      <button id="login-btn" onclick="doLogin()"
+              style="width:100%;margin-top:12px;padding:11px;border:none;border-radius:10px;cursor:pointer;
+              background:#6a78ff;color:#fff;font-size:15px;font-weight:600;">进入</button>
+    </div>
+  </div>
+</body>
+
+</html>
