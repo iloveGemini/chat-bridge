@@ -10,6 +10,7 @@ class ChatView {
     this.messages = [];
     this.pollTimer = null;
     this.pending = false;
+    this.typingState = '';
     this.generating = false;
     this.pendingImage = null;
     this.maxDisplay = MAX_DISPLAY;
@@ -24,6 +25,7 @@ class ChatView {
       send: document.querySelector('#chat-room .send-btn'),
       title: document.getElementById('chat-room-title'),
       imgBtn: document.getElementById('btn-image'),
+      voiceBtn: document.getElementById('btn-voice'),
       file: document.getElementById('file-upload'),
       preview: document.getElementById('preview-box'),
       previewImg: document.getElementById('preview-img'),
@@ -51,12 +53,11 @@ class ChatView {
     e.input.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter' && !ev.shiftKey && !isMobile) { ev.preventDefault(); this.onSend(); }
     });
-
     e.imgBtn.addEventListener('click', () => e.file.click());
     e.file.addEventListener('change', (ev) => this.onPickImage(ev));
     e.rmImg.addEventListener('click', () => this.clearImage());
     e.jump.addEventListener('click', () => this.scrollToBottom(true));
-
+    
     // 使用事件代理，接管聊天窗口内所有动作按钮的点击
     e.scroll.addEventListener('click', (ev) => {
       const btn = ev.target.closest('.action-btn');
@@ -95,19 +96,49 @@ class ChatView {
 
   async syncOnce() {
     if (!this.sessionId) return;
+    if (this._isSyncing) return; 
+    this._isSyncing = true;
     try {
-      const msgs = await api.fetchMessages(this.sessionId);
-      const status = await api.fetchTypingStatus(this.sessionId);
+      const [msgs, status] = await Promise.all([
+        api.fetchMessages(this.sessionId),
+        api.fetchTypingStatus(this.sessionId)
+      ]);
       this.messages = Array.isArray(msgs) ? msgs : [];
       this.pending = Boolean(status.pending);
+      this.typingState = status.status || status.state || '对方正在思考...';
 
       this.setGenerating(this.pending);
       this.render();
 
+      let banner = document.getElementById('tooling-banner');
+      if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'tooling-banner';
+        // 改头换面：高级毛玻璃悬浮胶囊
+        banner.style.cssText = 'background: var(--menu-bg, rgba(255,255,255,0.85)); color: var(--text-secondary); font-size: 13px; padding: 8px 18px; position: absolute; top: 76px; left: 50%; transform: translateX(-50%); z-index: 10; border-radius: 20px; box-shadow: 0 8px 30px rgba(0,0,0,0.12); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 0.5px solid var(--border-color); display: none; align-items: center; justify-content: center; gap: 8px; font-weight: 500; opacity: 0; transition: opacity 0.3s ease, top 0.3s ease;';
+        const chatRoom = document.getElementById('chat-room');
+        if (chatRoom) chatRoom.appendChild(banner);
+      }
+      if (this.pending && this.typingState) {
+        // 加个旋转的 SVG loading 小图标，并改为“绿油油”的样式
+        banner.style.background = 'rgba(46, 204, 113, 0.15)';
+        banner.style.color = '#2ecc71';
+        banner.style.border = '1px solid rgba(46, 204, 113, 0.3)';
+        
+        banner.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation: spin 2s linear infinite;"><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line></svg> <span>${escHtml(this.typingState)}</span><style>@keyframes spin { 100% { transform: rotate(360deg); } }</style>`;
+        banner.style.display = 'flex';
+        // 触发重绘以应用过渡动画
+        requestAnimationFrame(() => { banner.style.opacity = '1'; banner.style.top = '80px'; });
+      } else if (banner) {
+        banner.style.opacity = '0';
+        banner.style.top = '70px';
+        setTimeout(() => { if (banner.style.opacity === '0') banner.style.display = 'none'; }, 300);
+      }
+
       const last = this.messages[this.messages.length - 1];
       if (this.pending || (last && last.role === 'user')) this.startPolling();
       else this.stopPolling();
-    } catch (e) { }
+    } catch (e) { console.error("syncOnce Error:", e); } finally { this._isSyncing = false; }
   }
 
   startPolling() { if (!this.pollTimer) this.pollTimer = setInterval(() => this.syncOnce(), 1500); }
@@ -148,8 +179,8 @@ class ChatView {
     e.input.value = '';
     e.input.style.height = 'auto';
     this.clearImage();
-
     this.pending = true;
+    this.typingState = '正在思考...';
     this.setGenerating(true);
     this._lastSig = '';
     this.render();
@@ -191,8 +222,7 @@ class ChatView {
     const start = Math.max(0, total - this.maxDisplay);
     const visible = this.messages.slice(start);
     const bubbleMode = store.getState().config.bubbleMode;
-
-    const sig = JSON.stringify(visible.map(m => [m.role, m.text, m.image])) + '|' + this.pending + '|' + bubbleMode + '|' + start;
+    const sig = JSON.stringify(visible.map(m => [m.role, m.text, m.image])) + '|' + this.pending + '|' + this.typingState + '|' + bubbleMode + '|' + start;
     if (sig === this._lastSig && !preserveScroll) return;
     this._lastSig = sig;
 
@@ -229,7 +259,7 @@ class ChatView {
         actionsHtml = `
           <div class="action-btn" title="编辑" data-act="edit">${ICONS.edit}</div>
           <div class="action-btn" title="复制" data-act="copy">${ICONS.copy}</div>
-          <div class="action-btn" title="更多展开" data-act="more">${ICONS.more}</div>
+          <div class="action-btn" title="删除" data-act="del" style="color: var(--text-secondary); opacity: 0.7;">${ICONS.trash || '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>'}</div>
         `;
       } else {
         actionsHtml = `
@@ -241,24 +271,14 @@ class ChatView {
         `;
       }
 
-      html += `
+     html += `
         <div class="msg msg-${isUser ? 'user' : 'ai'}" data-msg-index="${actualIdx}">
           ${bubblesHtml}
           <div class="msg-actions">${actionsHtml}</div>
           <div class="msg-time">${formatTime(m.ts)}</div>
         </div>
       `;
-    });
-
-    if (this.pending) {
-      const last = this.messages[total - 1];
-      if (!last || last.role === 'user') {
-        html += `
-          <div class="msg msg-ai">
-            <div class="msg-bubble" style="opacity:0.6;font-size:13px;">对方正在组织语言...</div>
-          </div>
-        `;
-      }
+    // 移除了底部的气泡状态提示，因为上方已经有绿油油的悬浮胶囊了
     }
 
     e.scroll.innerHTML = html;
@@ -354,6 +374,11 @@ class ChatView {
         }
         this.render(true);
       });
+    } else if (act === 'del') {
+      if (!confirm('确定彻底删除这条记录吗？')) return;
+      api.postS('/api/delete', { index: idx }, this.sessionId)
+        .then(() => { showToast('已删除'); this.syncOnce(); })
+        .catch(() => showToast('删除请求失败'));
     } else if (act === 'more') {
       this.openMoreMenu(idx, btnEl);
     }
@@ -368,28 +393,37 @@ class ChatView {
     const menuBox = document.createElement('div');
     menuBox.className = 'popover-box';
     menuBox.style.zIndex = '8002';
-    menuBox.style.minWidth = '140px';
+    menuBox.style.minWidth = 'auto';
+    menuBox.style.display = 'flex';
+    menuBox.style.padding = '10px 8px';
+    menuBox.style.gap = '14px';
+    menuBox.style.flexDirection = 'column';
+    menuBox.style.borderRadius = '12px';
+    
+    // 高级毛玻璃假透明效果
+    menuBox.style.background = 'var(--menu-bg, rgba(255,255,255,0.5))';
+    menuBox.style.backdropFilter = 'blur(16px)';
+    menuBox.style.webkitBackdropFilter = 'blur(16px)';
+    menuBox.style.boxShadow = '0 8px 32px rgba(0,0,0,0.15)';
+    menuBox.style.border = '0.5px solid rgba(128,128,128,0.2)';
 
     const rect = anchorEl.getBoundingClientRect();
-    const popHeight = 180;
+    const popHeight = 160; // 竖排变高了
     if (rect.top > popHeight) {
       menuBox.style.top = (rect.top - popHeight - 8) + 'px';
     } else {
       menuBox.style.top = (rect.bottom + 8) + 'px';
     }
-    menuBox.style.left = Math.min(rect.left - 20, window.innerWidth - 150) + 'px';
+    menuBox.style.left = Math.min(rect.left - 20, window.innerWidth - 60) + 'px';
 
-    // 严禁 Emoji，仅提取矢量 icon，如果没有就留空
-    const getIcon = (key) => (window.ICONS && window.ICONS[key]) ? window.ICONS[key] : '';
+    const getIcon = (key) => (ICONS && ICONS[key]) ? ICONS[key] : '';
 
     menuBox.innerHTML = `
-      <div class="popover-item" data-menu-act="savePoint">${getIcon('savePoint')} 创建存档点</div>
-      <div class="popover-item" data-menu-act="branch">${getIcon('branch')} 创建分支</div>
-      <div class="popover-item" data-menu-act="rewind">${getIcon('rewind')} 时光回溯</div>
-      <div style="height:1px;background:var(--border-color);margin:4px 0;"></div>
-      <div class="popover-item destructive" data-menu-act="del">${getIcon('trash')} 彻底删除</div>
+      <div class="action-btn" title="创建存档点" data-menu-act="savePoint">${getIcon('savePoint') || '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>'}</div>
+      <div class="action-btn" title="创建分支" data-menu-act="branch">${getIcon('branch') || '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>'}</div>
+      <div class="action-btn" title="时光回溯" data-menu-act="rewind">${getIcon('rewind') || '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v5h5"></path><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"></path></svg>'}</div>
+      <div class="action-btn" title="彻底删除" data-menu-act="del" style="color: var(--text-secondary); opacity: 0.7;">${getIcon('trash') || '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>'}</div>
     `;
-
     const dismiss = () => { backdrop.remove(); menuBox.remove(); };
     backdrop.onclick = dismiss;
 

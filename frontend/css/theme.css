@@ -23,7 +23,9 @@
   --send-color: #ffffff;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
   --radius: 20px;
-  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue",
+    "PingFang SC", "Microsoft YaHei", sans-serif;
   --status-ok: #34c759;
   --status-off: #ff3b30;
   --menu-bg: rgba(255, 255, 255, 0.88);
@@ -36,12 +38,12 @@
   --text: #f0f0f0;
   --text-secondary: #a0a0b0;
   --text-faint: #555570;
-  --user-bubble: #4A4458;
+  --user-bubble: #4a4458;
   --user-text: #e0e0e0;
-  --ai-bubble: #50378B;
+  --ai-bubble: #50378b;
   --ai-text: #ffffff;
   --input-bg: #1a1a2e;
-  --send-bg: #50378B;
+  --send-bg: #50378b;
   --send-color: #ffffff;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
   --status-ok: #a78bfa;
@@ -67,7 +69,9 @@
   --status-ok: #a1b5d8;
   --menu-bg: rgba(30, 31, 33, 0.95);
   /* 灵魂对齐：夜间模式也必须用宋体栈，才有文学感 */
-  --font: "Songti SC", "Noto Serif SC", "STSong", "SimSun", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font:
+    "Songti SC", "Noto Serif SC", "STSong", "SimSun", -apple-system,
+    BlinkMacSystemFont, sans-serif;
 
   /* 多气泡 5 色循环的默认占位（第 1 套） */
   --v-bg1: rgba(8, 74, 124, 0.4);
@@ -78,7 +82,7 @@
 }
 
 /* ===== 1. 跨消息行级循环（原汁原味的 0.4 透明度 RGB） ===== */
-[data-theme="midnight"] .msg:nth-child(5n+1) {
+[data-theme="midnight"] .msg:nth-child(5n + 1) {
   --v-bg1: rgba(8, 74, 124, 0.4);
   --v-bg2: rgba(52, 83, 146, 0.4);
   --v-bd: rgba(52, 83, 146, 0.6);
@@ -86,7 +90,7 @@
   --v-sd-out: rgba(52, 83, 146, 0.3);
 }
 
-[data-theme="midnight"] .msg:nth-child(5n+2) {
+[data-theme="midnight"] .msg:nth-child(5n + 2) {
   --v-bg1: rgba(52, 83, 146, 0.4);
   --v-bg2: rgba(119, 134, 175, 0.4);
   --v-bd: rgba(119, 134, 175, 0.6);
@@ -94,7 +98,7 @@
   --v-sd-out: rgba(119, 134, 175, 0.3);
 }
 
-[data-theme="midnight"] .msg:nth-child(5n+3) {
+[data-theme="midnight"] .msg:nth-child(5n + 3) {
   --v-bg1: rgba(119, 134, 175, 0.4);
   --v-bg2: rgba(125, 90, 133, 0.4);
   --v-bd: rgba(125, 90, 133, 0.6);
@@ -102,7 +106,7 @@
   --v-sd-out: rgba(125, 90, 133, 0.3);
 }
 
-[data-theme="midnight"] .msg:nth-child(5n+4) {
+[data-theme="midnight"] .msg:nth-child(5n + 4) {
   --v-bg1: rgba(125, 90, 133, 0.4);
   --v-bg2: rgba(205, 154, 177, 0.4);
   --v-bd: rgba(205, 154, 177, 0.6);
@@ -110,7 +114,7 @@
   --v-sd-out: rgba(205, 154, 177, 0.3);
 }
 
-[data-theme="midnight"] .msg:nth-child(5n+5) {
+[data-theme="midnight"] .msg:nth-child(5n + 5) {
   --v-bg1: rgba(205, 154, 177, 0.4);
   --v-bg2: rgba(8, 74, 124, 0.4);
   --v-bd: rgba(8, 74, 124, 0.6);
@@ -118,8 +122,8 @@
   --v-sd-out: rgba(8, 74, 124, 0.3);
 }
 
-    /* ===== 2. 气泡模式下，单条 AI 回复内部的多气泡光谱循环 ===== */
-[data-theme="midnight"] .msg-multi .msg-bubble:nth-child(5n+1) {
+/* ===== 2. 气泡模式下，单条 AI 回复内部的多气泡光谱循环 ===== */
+[data-theme="midnight"] .msg-multi .msg-bubble:nth-child(5n + 1) {
   --v-bg1: rgba(8, 74, 124, 0.4);
   --v-bg2: rgba(52, 83, 146, 0.4);
   --v-bd: rgba(52, 83, 146, 0.6);
@@ -127,7 +131,7 @@
   --v-sd-out: rgba(52, 83, 146, 0.3);
 }
 
-[data-theme="midnight"] .msg-multi .msg-bubble:nth-child(5n+2) {
+[data-theme="midnight"] .msg-multi .msg-bubble:nth-child(5n + 2) {
   --v-bg1: rgba(52, 83, 146, 0.4);
   --v-bg2: rgba(119, 134, 175, 0.4);
   --v-bd: rgba(119, 134, 175, 0.6);
@@ -135,7 +139,7 @@
   --v-sd-out: rgba(119, 134, 175, 0.3);
 }
 
-[data-theme="midnight"] .msg-multi .msg-bubble:nth-child(5n+3) {
+[data-theme="midnight"] .msg-multi .msg-bubble:nth-child(5n + 3) {
   --v-bg1: rgba(119, 134, 175, 0.4);
   --v-bg2: rgba(125, 90, 133, 0.4);
   --v-bd: rgba(125, 90, 133, 0.6);
@@ -143,7 +147,7 @@
   --v-sd-out: rgba(125, 90, 133, 0.3);
 }
 
-[data-theme="midnight"] .msg-multi .msg-bubble:nth-child(5n+4) {
+[data-theme="midnight"] .msg-multi .msg-bubble:nth-child(5n + 4) {
   --v-bg1: rgba(125, 90, 133, 0.4);
   --v-bg2: rgba(205, 154, 177, 0.4);
   --v-bd: rgba(205, 154, 177, 0.6);
@@ -151,7 +155,7 @@
   --v-sd-out: rgba(205, 154, 177, 0.3);
 }
 
-[data-theme="midnight"] .msg-multi .msg-bubble:nth-child(5n+5) {
+[data-theme="midnight"] .msg-multi .msg-bubble:nth-child(5n + 5) {
   --v-bg1: rgba(205, 154, 177, 0.4);
   --v-bg2: rgba(8, 74, 124, 0.4);
   --v-bd: rgba(8, 74, 124, 0.6);
@@ -159,24 +163,30 @@
   --v-sd-out: rgba(8, 74, 124, 0.3);
 }
 
-    /* ===== 3. 实际上色：注入灵魂的“果冻微光立体阴影” ===== */
+/* ===== 3. 实际上色：注入灵魂的“果冻微光立体阴影” ===== */
 [data-theme="midnight"] .msg .msg-bubble {
   background: linear-gradient(135deg, var(--v-bg1), var(--v-bg2)) !important;
   border: 2px solid var(--v-bd) !important;
-      color: #f0f4f8;
-      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
-      border-radius: 24px !important;
-      /* 强制两边对称圆润 */
+  color: #f0f4f8;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  border-radius: 24px !important;
+  /* 强制两边对称圆润 */
 }
 
-    /* 用户气泡：左上高光，右下内阴影 */
+/* 用户气泡：左上高光，右下内阴影 */
 [data-theme="midnight"] .msg-user .msg-bubble {
-  box-shadow: inset 2px 2px 6px rgba(255, 255, 255, 0.05), inset -2px -2px 6px var(--v-sd-in), 0 4px 8px var(--v-sd-out) !important;
+  box-shadow:
+    inset 2px 2px 6px rgba(255, 255, 255, 0.05),
+    inset -2px -2px 6px var(--v-sd-in),
+    0 4px 8px var(--v-sd-out) !important;
 }
 
-    /* AI气泡：右上高光，左下内阴影 */
+/* AI气泡：右上高光，左下内阴影 */
 [data-theme="midnight"] .msg-ai .msg-bubble {
-  box-shadow: inset -2px 2px 6px rgba(255, 255, 255, 0.05), inset 2px -2px 6px var(--v-sd-in), 0 4px 8px var(--v-sd-out) !important;
+  box-shadow:
+    inset -2px 2px 6px rgba(255, 255, 255, 0.05),
+    inset 2px -2px 6px var(--v-sd-in),
+    0 4px 8px var(--v-sd-out) !important;
 }
 
 [data-theme="midnight"] .msg .msg-bubble code,
@@ -185,7 +195,7 @@
   color: #ffffff;
 }
 
-    /* 经典文学纸质墨色风 */
+/* 经典文学纸质墨色风 */
 [data-theme="paper"] {
   --bg: #f6f6f6;
   --surface: rgba(255, 255, 255, 0.85);
@@ -206,18 +216,20 @@
   --status-ok: #8f7e72;
   --menu-bg: rgba(255, 255, 255, 0.92);
   /* 灵魂注入：优先使用宋体/明朝体栈，呼应原版 nanoFullSong 的文学感 */
-  --font: "Songti SC", "Noto Serif SC", "STSong", "SimSun", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font:
+    "Songti SC", "Noto Serif SC", "STSong", "SimSun", -apple-system,
+    BlinkMacSystemFont, sans-serif;
 }
 
 /* 还原四次元壁精髓：用户气泡纯白带细边框，AI气泡浅灰带白边框 */
 [data-theme="fourth-wall"] .msg-user .msg-bubble {
-      border: 1px solid rgba(220, 220, 220, 1);
-      box-shadow: 0 3px 6px rgba(168, 168, 168, 0.15);
+  border: 1px solid rgba(220, 220, 220, 1);
+  box-shadow: 0 3px 6px rgba(168, 168, 168, 0.15);
 }
 
 [data-theme="fourth-wall"] .msg-ai .msg-bubble {
-      border: 1px solid #ffffff;
-      box-shadow: 0 3px 6px rgba(168, 168, 168, 0.15);
+  border: 1px solid #ffffff;
+  box-shadow: 0 3px 6px rgba(168, 168, 168, 0.15);
 }
 
 /* ---------- 新前端布局用的变量别名（映射到上面的主题变量） ---------- */

@@ -1,9 +1,22 @@
 /* 主题变量由 css/theme.css 统一提供（含 --bg-color 等别名） */
 
-* { box-sizing: border-box; margin: 0; padding: 0; }
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
 
 body {
-  font-family: var(--font, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif);
+  font-family: var(
+    --font,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif
+  );
   background-color: var(--bg-color);
   color: var(--text-color);
   overflow: hidden;
@@ -29,7 +42,10 @@ body {
 
 .tab-view {
   position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   display: none;
   flex-direction: column;
 }
@@ -48,6 +64,7 @@ body {
   position: relative;
   border-bottom: 1px solid var(--border-color);
   z-index: 10;
+   padding: 0; /* 移除左右padding，让标题可以完美居中 */
 }
 
 .content {
@@ -104,7 +121,10 @@ body {
 /* Level 2: Detail Overlay */
 .detail-overlay {
   position: fixed;
-  top: 0; left: 0; right: 0; bottom: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   pointer-events: none;
   z-index: 100;
 }
@@ -112,7 +132,10 @@ body {
 .detail-view,
 .level-2-view {
   position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   background: var(--bg-color);
   display: flex;
   flex-direction: column;
@@ -127,7 +150,7 @@ body {
 .level-2-view.show {
   transform: translateX(0);
   pointer-events: auto;
-  box-shadow: -4px 0 20px rgba(0,0,0,0.15); /* 仅在侧滑出来时显示阴影 */
+  box-shadow: -4px 0 20px rgba(0, 0, 0, 0.15); /* 仅在侧滑出来时显示阴影 */
 }
 
 /* Generic List Item */
@@ -146,17 +169,35 @@ body {
 }
 
 .avatar {
-  width: 45px; height: 45px;
+  width: 45px;
+  height: 45px;
   background: #333;
   border-radius: 6px;
-  display: flex; align-items: center; justify-content: center;
-  color: white; font-weight: bold; font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: bold;
+  font-size: 18px;
   margin-right: 12px;
 }
 
-.info { flex: 1; overflow: hidden; }
-.info .name { font-size: 16px; margin-bottom: 4px; color: var(--text-color); }
-.info .msg { font-size: 14px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.info {
+  flex: 1;
+  overflow: hidden;
+}
+.info .name {
+  font-size: 16px;
+  margin-bottom: 4px;
+  color: var(--text-color);
+}
+.info .msg {
+  font-size: 14px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* View Specific */
 .back-btn {
@@ -168,7 +209,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: none; border: none; 
+  background: none;
+  border: none;
   color: var(--text-color);
   cursor: pointer;
   z-index: 10;
