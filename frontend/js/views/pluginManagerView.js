@@ -14,6 +14,18 @@ class PluginManagerView {
       <div id="plugin-list"></div>
     `;
     router.pushView('plugin-manager-view');
+
+    // 先用服务器端的会话授权状态校准本地开关（服务器为准，跨设备一致）
+    try {
+      const res = await api.toolsGet(sid);
+      const cfg = res && res.tools ? res.tools : null;
+      if (cfg) {
+        ['outreach', 'web', 'coding'].forEach(t => {
+          if (t in cfg) localStorage.setItem(`tool_${t}_${sid}`, cfg[t] ? '1' : '0');
+        });
+      }
+    } catch (e) { /* 拉取失败就用本地 localStorage 兜底 */ }
+
     this.render();
   }
 
@@ -24,6 +36,7 @@ class PluginManagerView {
 
     const outreachEn = localStorage.getItem(`tool_outreach_${sid}`) !== '0';
     const webEn = localStorage.getItem(`tool_web_${sid}`) === '1';
+    const codingEn = localStorage.getItem(`tool_coding_${sid}`) === '1';
 
     list.innerHTML = `
       <!-- ================= Tool 1: 主动联系 (Proactive Outreach) ================= -->
@@ -93,6 +106,28 @@ class PluginManagerView {
             <input type="checkbox" class="plugin-switch" data-tool="web" ${webEn ? 'checked' : ''}>
             <span class="slider"></span>
           </label>
+        </div>
+      </div>
+
+      <!-- ================= Tool 3: 本地项目操控 (Coding Agent) ================= -->
+
+      <div class="ios-group" id="plugin-card-coding">
+        <div class="ios-item" style="border-bottom:${codingEn ? '0.5px solid var(--border-color)' : 'none'}">
+          <span class="label"><span style="color:var(--text-secondary);display:flex;">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+          </span> 本地项目操控 (Coding Agent)</span>
+          <label class="switch">
+            <input type="checkbox" class="plugin-switch" data-tool="coding" ${codingEn ? 'checked' : ''}>
+            <span class="slider"></span>
+          </label>
+        </div>
+        
+        <div class="plugin-config-panel ${codingEn ? 'show' : ''}" id="panel-coding" style="max-height:${codingEn ? '150px' : '0px'}; overflow:hidden; transition:max-height 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);">
+          <div style="padding: 12px 16px 16px; font-size: 12px; color: #ff3b30; line-height:1.5; background: rgba(255, 59, 48, 0.05);">
+            ⚠️ <b>高危授权提醒：</b><br>
+            开启后，当前会话的 AI 将获得服务器底层 <b>文件读写</b> 与 <b>终端执行</b> 权限（可运行脚本、修改代码）。<br>
+            <i>请确保您完全信任该模型，并防范恶意提示词注入。</i>
+          </div>
         </div>
       </div>
     `;
@@ -183,6 +218,12 @@ class PluginManagerView {
         const tool = sw.dataset.tool;
         const checked = e.target.checked;
         localStorage.setItem(`tool_${tool}_${sid}`, checked ? '1' : '0');
+        // 回写服务器：该会话的工具授权即时生效（失败则回滚本地开关）
+        api.toolsSet({ [tool]: checked }, sid).catch(() => {
+          localStorage.setItem(`tool_${tool}_${sid}`, checked ? '0' : '1');
+          e.target.checked = !checked;
+          showToast('授权同步失败，请重试');
+        });
 
         const group = sw.closest('.ios-group');
         const item = group.querySelector('.ios-item');

@@ -130,7 +130,7 @@
             </svg>
           </button>
           <input type="file" id="file-upload" accept="image/*" style="display:none;">
-          <input type="text" class="chat-input" placeholder="Message..." autocomplete="off">
+          <textarea type="text" class="chat-input" placeholder="Message..." autocomplete="off"></textarea>
           <button class="send-btn">发送</button>
         </div>
       </div>
@@ -297,6 +297,19 @@
         <div style="flex:1; text-align:center; padding-right:40px; font-weight:600;">工具箱 (Plugins)</div>
       </div>
       <div class="content" id="plugin-manager-content" style="background: var(--bg-color);"></div>
+    </div>
+
+    <!-- 对话执行预设管理 -->
+    <div id="presets-view" class="level-2-view">
+      <div class="header">
+        <div class="back-btn" onclick="router.popView()">
+          <svg viewBox="0 0 24 24" width="24" height="24">
+            <path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z" fill="currentColor" />
+          </svg>
+        </div>
+        <div style="flex:1; text-align:center; padding-right:40px; font-weight:600;">对话执行预设</div>
+      </div>
+      <div class="content" id="presets-content" style="background: var(--bg-color);"></div>
     </div>
 
     <!-- 全局世界书管理：列表 -->

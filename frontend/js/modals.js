@@ -92,115 +92,140 @@ export async function openPromptEditor(category, name, onDone) {
   const isChar = category === 'character';
   let avatarData = '', voice = {};
   let content = '', displayName = '';
-  
-  if (name) {
-    try {
-      const d = await api.getPrompt(category, name);
-      if (d.ok) { content = d.data.content || ''; displayName = d.data.name || name; avatarData = d.data.avatar || ''; voice = d.data.voice || {}; }
-    } catch (e) {}
-  }
 
   const titleEl = document.getElementById('editor-title');
   const contentEl = document.getElementById('editor-content');
   const saveBtn = document.getElementById('editor-save-btn');
 
-  titleEl.textContent = name ? '编辑' + (isChar ? '角色' : '设定') : '新建' + (isChar ? '角色' : '设定');
+  titleEl.textContent = name ? `编辑${isChar ? '角色' : '用户'}资料` : `新建${isChar ? '角色' : '用户'}`;
+  saveBtn.textContent = '保存';
+  saveBtn.onclick = null; // 清掉上一次编辑器残留的保存处理器，避免加载期间误触
+
+  // 先把编辑器页推上来（带加载态），再异步取数据——
+  // 这样即便服务器一时繁忙，点「编辑」也会立刻出现页面而不是看起来卡死。
+  contentEl.innerHTML = '<div style="padding:60px 0;text-align:center;color:var(--text-secondary);">加载中...</div>';
+  router.pushView('generic-editor-view');
+
+  if (name) {
+    try {
+      const d = await api.getPrompt(category, name);
+      if (d.ok) {
+        content = d.data.content || '';
+        displayName = d.data.name || name;
+        avatarData = d.data.avatar || '';
+        voice = d.data.voice || {};
+      }
+    } catch (e) {}
+  }
+
+  // 若加载期间用户已经返回（当前栈顶不再是编辑器），就不再覆盖渲染
+  if (router.history[router.history.length - 1] !== 'generic-editor-view') return;
 
   contentEl.innerHTML = `
-    <div class="form-group" style="margin-bottom:12px;">
-      <input type="text" class="sheet-input" id="pe-name" placeholder="名称标识" value="${escHtml(displayName)}">
+    <div class="ios-sec-title">基本信息</div>
+    <div class="ios-group" style="margin-top:0;">
+      <div class="ios-item" id="pe-avatar-row">
+        <span class="label">头像</span>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <img id="pe-avatar-preview" src="${avatarData || getFallbackAvatar(displayName || name || (isChar ? 'C' : 'U'))}" style="width:40px; height:40px; border-radius:50%; object-fit:cover; border:0.5px solid var(--border-color);">
+          <span style="color:var(--text-secondary); font-size:13px;">点击更换</span>
+        </div>
+        <input type="file" id="pe-avatar-file" accept="image/*" style="display:none;">
+      </div>
+      <div class="ios-item">
+        <span class="label">名称</span>
+        <input type="text" class="ios-input" id="pe-name" placeholder="请输入设定名称" value="${escHtml(displayName)}">
+      </div>
     </div>
-    ${isChar ? `
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;background:var(--surface);padding:10px;border-radius:10px;border:1px solid var(--border-color);">
-      <img id="pe-avatar" src="${avatarData || getFallbackAvatar(displayName)}" style="width:48px;height:48px;border-radius:50%;object-fit:cover;">
-      <button class="btn-secondary" id="pe-avatar-btn" style="flex:1;">更换头像</button>
-      <input type="file" id="pe-avatar-file" accept="image/*" style="display:none;">
+
+    <div class="ios-sec-title">${isChar ? '角色核心设定' : '用户核心设定'}</div>
+    <div class="ios-group" style="margin-top:0; padding:12px 16px;">
+      <textarea class="sheet-textarea" id="pe-content" placeholder="请输入详细的背景设定、性格特征或对话习惯..." style="width:100%; min-height:220px; border:none; background:transparent; padding:0; color:var(--text); font-size:15px; line-height:1.5; outline:none; resize:none;">${escHtml(content)}</textarea>
     </div>
-    <div class="sheet-section-label">音色选择</div>
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">
-      <select class="sheet-input" id="pe-voice" style="margin:0;flex:1;">
-        ${VOICE_PRESETS.map(v => `<option value="${v.id}" ${v.id === (voice.voice_id || '') ? 'selected' : ''}>${escHtml(v.label)}</option>`).join('')}
-      </select>
-      <button class="btn-secondary" id="pe-voice-try" style="width:auto;padding:8px 14px;">试听</button>
+
+    ${(name && name !== 'default') ? `
+    <div class="ios-group" style="margin-top:30px; background:transparent;">
+      <div id="pe-del-btn" style="text-align:center; padding:14px; background:var(--surface); border-radius:12px; color:#ff3b30; font-weight:bold; font-size:16px; cursor:pointer;">
+        删除此${isChar ? '角色' : '用户'}资料
+      </div>
     </div>
-    <div style="display:flex;gap:16px;margin-bottom:12px;font-size:12px;color:var(--text-secondary);">
-      <label>语速 <input type="number" class="sheet-input" id="pe-speed" value="${voice.speed ?? 1}" step="0.1" min="0.5" max="2" style="width:60px;padding:6px;margin-top:4px;"></label>
-      <label>音调 <input type="number" class="sheet-input" id="pe-pitch" value="${voice.pitch ?? 0}" step="1" min="-12" max="12" style="width:60px;padding:6px;margin-top:4px;"></label>
-    </div>` : ''}
-    <div class="sheet-section-label">设定正文</div>
-    <textarea class="sheet-textarea" id="pe-content" placeholder="输入核心设定..." style="min-height:300px;">${escHtml(content)}</textarea>
-    
-    ${(name && name !== 'default') ? `<div style="text-align:center;margin-top:20px;"><button class="edit-btn-cancel" id="pe-del" style="color:#ff3b30;background:transparent;width:100%;">删除此设定</button></div>` : ''}
+    ` : ''}
   `;
 
-  // 绑定保存事件 (替换原有的底部 Save 按钮，改为顶部 Header 按钮)
-  saveBtn.onclick = async () => {
-    const newName = contentEl.querySelector('#pe-name').value.trim();
-    if (!newName) { showToast('请填写名称'); return; }
-    
-    const payload = { category, name: name || newName, content: contentEl.querySelector('#pe-content').value, display_name: newName };
-    if (name) payload.old_name = name;
-    if (isChar) { 
-      payload.avatar = avatarData; 
-      payload.voice = {
-        voice_id: contentEl.querySelector('#pe-voice').value,
-        speed: parseFloat(contentEl.querySelector('#pe-speed').value) || 1,
-        pitch: parseInt(contentEl.querySelector('#pe-pitch').value) || 0
-      }; 
-    }
-    
-    const r = await api.savePrompt(payload);
-    if (r.ok) { 
-      showToast('已保存'); 
-      router.popView(); 
-      if (onDone) onDone(); 
-    } else {
-      showToast('保存失败');
-    }
-  };
-
-  // 绑定删除及头像上传
-  const delBtn = contentEl.querySelector('#pe-del');
-  if (delBtn) delBtn.onclick = async () => {
-    if (!confirm(`确认删除「${displayName || name}」？`)) return;
-    await api.deletePrompt(category, name); 
-    router.popView();
-    if (onDone) onDone();
-  };
-
-  if (isChar) {
-    contentEl.querySelector('#pe-avatar-btn').onclick = () => contentEl.querySelector('#pe-avatar-file').click();
-    contentEl.querySelector('#pe-avatar-file').onchange = (ev) => {
+  // 绑定头像上传 (角色与用户资料完全打通)
+  const avatarRow = contentEl.querySelector('#pe-avatar-row');
+  const avatarFile = contentEl.querySelector('#pe-avatar-file');
+  if (avatarRow && avatarFile) {
+    avatarRow.onclick = () => avatarFile.click();
+    avatarFile.onchange = (ev) => {
       const f = ev.target.files[0]; if (!f) return;
-      const r = new FileReader(); r.onload = (e) => { avatarData = e.target.result; contentEl.querySelector('#pe-avatar').src = avatarData; }; r.readAsDataURL(f);
-    };
-    contentEl.querySelector('#pe-voice-try').onclick = async (ev) => {
-      ev.preventDefault();
-      const btn = ev.target; btn.disabled = true; btn.textContent = '合成中…';
-      try {
-        const d = await api.tts({ text: '你好呀，这是我现在的声音。', voice: { voice_id: contentEl.querySelector('#pe-voice').value, speed: parseFloat(contentEl.querySelector('#pe-speed').value) || 1, pitch: parseInt(contentEl.querySelector('#pe-pitch').value) || 0 }});
-        if (d && d.ok) { new Audio(d.audio).play().catch(() => {}); }
-        else showToast('试听失败');
-      } catch (e) { showToast('试听失败'); }
-      btn.disabled = false; btn.textContent = '试听';
+      const r = new FileReader(); 
+      r.onload = (e) => { 
+        avatarData = e.target.result; 
+        contentEl.querySelector('#pe-avatar-preview').src = avatarData; 
+      }; 
+      r.readAsDataURL(f);
     };
   }
 
-  // 推入全屏页面
-  router.pushView('generic-editor-view');
+  // 保存操作
+  saveBtn.onclick = async () => {
+    const newName = contentEl.querySelector('#pe-name').value.trim();
+    if (!newName) { showToast('名称不能为空'); return; }
+
+    const payload = { 
+      category, 
+      name: name || newName, 
+      content: contentEl.querySelector('#pe-content').value, 
+      display_name: newName,
+      avatar: avatarData 
+    };
+
+    if (name) payload.old_name = name;
+    // 角色语音在「角色资料 → 语音音色」单独配置，编辑器统一为「头像+名称+核心设定」。
+    // 保存时不覆盖已有 voice：仅当编辑现有角色时回填原 voice，避免被清空。
+    if (isChar && voice && Object.keys(voice).length) payload.voice = voice;
+
+    const r = await api.savePrompt(payload);
+    if (r.ok) {
+      showToast('已保存');
+      router.popView();
+      if (onDone) onDone();
+    } else { showToast(r.error || '保存失败'); }
+  };
+
+  // 删除操作
+  const delBtn = contentEl.querySelector('#pe-del-btn');
+  if (delBtn) {
+    delBtn.onclick = async () => {
+      if (!confirm(`确定要删除 "${displayName || name}" 吗？`)) return;
+      await api.deletePrompt(category, name);
+      showToast('已删除');
+      router.popView();
+      if (onDone) onDone();
+    };
+  }
 }
 
 // ========== 预设编辑 (全屏化) ==========
 export async function openPresetEditor(name, tree, onDone) {
-  let refs = { main: 'default', style: 'default', post: 'default' };
-  if (name) { try { const d = await api.getPreset(name); if (d.ok && d.data) refs = { main: d.data.main || 'default', style: d.data.style || 'default', post: d.data.post || 'default' }; } catch (e) {} }
-  const opt = (slot, sel) => (tree[slot] || []).map(n => `<option value="${escHtml(n)}" ${n === sel ? 'selected' : ''}>${escHtml(n)}</option>`).join('');
-  
   const titleEl = document.getElementById('editor-title');
   const contentEl = document.getElementById('editor-content');
   const saveBtn = document.getElementById('editor-save-btn');
 
   titleEl.textContent = name ? '编辑预设' : '新建预设';
+  saveBtn.textContent = '保存';
+  saveBtn.onclick = null;
+
+  // 先推页带加载态，再异步取数据，避免点编辑看起来卡死
+  contentEl.innerHTML = '<div style="padding:60px 0;text-align:center;color:var(--text-secondary);">加载中...</div>';
+  router.pushView('generic-editor-view');
+
+  let refs = { main: 'default', style: 'default', post: 'default' };
+  if (name) { try { const d = await api.getPreset(name); if (d.ok && d.data) refs = { main: d.data.main || 'default', style: d.data.style || 'default', post: d.data.post || 'default' }; } catch (e) {} }
+  const opt = (slot, sel) => (tree[slot] || []).map(n => `<option value="${escHtml(n)}" ${n === sel ? 'selected' : ''}>${escHtml(n)}</option>`).join('');
+
+  if (router.history[router.history.length - 1] !== 'generic-editor-view') return;
 
   contentEl.innerHTML = `
     <div class="form-group" style="margin-bottom:12px;">
@@ -222,8 +247,6 @@ export async function openPresetEditor(name, tree, onDone) {
 
   const delBtn = contentEl.querySelector('#ps-del');
   if (delBtn) delBtn.onclick = async () => { if (!confirm('删除该预设？')) return; await api.deletePreset(name); router.popView(); if(onDone) onDone(); };
-
-  router.pushView('generic-editor-view');
 }
 
 // ========== 记忆管理 ==========

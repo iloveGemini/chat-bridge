@@ -23,6 +23,9 @@ export class Router {
     if (!view) return;
     view.classList.add('show');
     this.history.push(viewId);
+    // 按入栈深度分配层级：后压入的页永远盖在上面，
+    // 修复「后打开的二级页因 DOM 顺序靠前而被旧页盖住」（如从分身页打开编辑器看似无效）。
+    view.style.zIndex = String(600 + this.history.length);
 
     if (viewId === 'chat-room') {
       import('./views/chatView.js').then(module => {
@@ -40,7 +43,7 @@ export class Router {
     if (this.history.length === 0) return;
     const viewId = this.history.pop();
     const view = document.getElementById(viewId);
-    if (view) view.classList.remove('show');
+    if (view) { view.classList.remove('show'); view.style.zIndex = ''; }
     if (viewId === 'chat-room') {
       import('./views/chatView.js').then(m => m.chatView.onLeave());
     }

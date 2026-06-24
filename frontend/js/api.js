@@ -72,6 +72,7 @@ class ApiService {
   savePrompt(payload) { return this.post('/api/prompts/save', payload); }
   deletePrompt(category, name) { return this.post('/api/prompts/delete', { category, name }); }
   usePrompt(binding, sid) { return this.postS('/api/prompts/use', binding, sid); }
+  setDefaultUser(key) { return this.post('/api/prompts/set_default_user', { key }); }
 
   // ---- 预设 ----
   fetchPresets() { return this.get('/api/presets/list'); }
@@ -105,6 +106,10 @@ class ApiService {
   outreachAdd(payload, sid) { return this.postS('/api/outreach', payload, sid); }
   outreachDelete(id, sid) { return this.postS('/api/outreach/delete', { id }, sid); }
   outreachToggle(id, enabled, sid) { return this.postS('/api/outreach/toggle', { id, enabled }, sid); }
+
+  // ---- 会话级工具授权（按会话窗口）----
+  toolsGet(sid) { return this.getS('/api/tools', sid); }
+  toolsSet(patch, sid) { return this.postS('/api/tools', patch, sid); }
 
   // ---- TTS ----
   tts(payload, sid) { return this.postS('/api/tts', payload, sid); }

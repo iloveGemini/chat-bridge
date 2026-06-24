@@ -49,6 +49,8 @@
 
 /* 多气泡模式：旁白与正文同属一条 AI 消息 */
 .msg-multi { gap: 0; }
+/* 同一条消息内多个气泡之间留间距，使其看起来像连续发来的多段 */
+.msg-bubble + .msg-bubble { margin-top: 5px; }
 
 /* 聊天输入栏 */
 .chat-inputbar {

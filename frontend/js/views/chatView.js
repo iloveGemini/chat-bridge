@@ -208,6 +208,20 @@ class ChatView {
       const imgHtml = m.image ? `<img src="${m.image}" class="msg-img">` : '';
       const body = isUser ? escHtml(m.text || '') : renderMarkdown(m.text || '');
 
+      // 多段气泡：开启后把 AI 整段回复按空行/换行拆成多条气泡（旁白与正文分开）
+      let bubblesHtml;
+      if (bubbleMode && !isUser) {
+        const parts = (m.text || '').split(/\n{1,}/).map(s => s.trim()).filter(Boolean);
+        if (parts.length > 1) {
+          bubblesHtml = parts.map((p, bi) =>
+            `<div class="msg-bubble">${bi === 0 ? imgHtml : ''}${renderMarkdown(p)}</div>`).join('');
+        } else {
+          bubblesHtml = `<div class="msg-bubble">${imgHtml}${body}</div>`;
+        }
+      } else {
+        bubblesHtml = `<div class="msg-bubble">${imgHtml}${body}</div>`;
+      }
+
       // ===== 注入内嵌操作栏 =====
       // 用户：编辑、复制、更多。 AI：播放、复制、重刷、更多。
       let actionsHtml = '';
@@ -229,7 +243,7 @@ class ChatView {
 
       html += `
         <div class="msg msg-${isUser ? 'user' : 'ai'}" data-msg-index="${actualIdx}">
-          <div class="msg-bubble">${imgHtml}${body}</div>
+          ${bubblesHtml}
           <div class="msg-actions">${actionsHtml}</div>
           <div class="msg-time">${formatTime(m.ts)}</div>
         </div>
@@ -304,7 +318,10 @@ class ChatView {
     } else if (act === 'edit') {
       // 【修改】内联无感编辑：直接将气泡变成纯净的自适应文本框
       const msgEl = btnEl.closest('.msg');
-      const bubbleEl = msgEl.querySelector('.msg-bubble');
+      const bubbles = msgEl.querySelectorAll('.msg-bubble');
+      const bubbleEl = bubbles[0];
+      // 多气泡时编辑期间只保留第一个气泡承载全文文本框，其余先隐藏（保存后重渲染恢复）
+      for (let bi = 1; bi < bubbles.length; bi++) bubbles[bi].style.display = 'none';
       const origText = m.text || '';
 
       const textarea = document.createElement('textarea');
