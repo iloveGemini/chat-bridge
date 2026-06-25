@@ -90,3 +90,15 @@
 - 验证：全部 py_compile 通过；import server 成功，6 个提示词函数 + 2 个场景函数身份均指向新模块；
       实跑 build_header_prompt/build_tail_anchor 拼装正常（含场景块 current_scene_state 与召回记忆注入）。
 - 遗留（无害）：测试产生的空目录 prompts_pkg_tmp、__prompttest__ 会话目录沙箱删不掉，data/ 与空目录都不入库。
+
+## 模块化拆分 (server 瘦身, 第 4 刀: memory 域)
+- [x] 新建 memory/ 包 + memory/memory.py：嵌入(_embed_cfg/_memory_cfg/embed_texts/embed_query/
+      _lore_embedding)、召回注入(build_injected_memory)、增量总结(SUMMARY_SYSTEM_PROMPT/run_summary/
+      summarize_session/_summ_*/_needs_summary/_migrate_legacy_memory)，从 server.py 原样抽出。
+- [x] _extract_json（memory 与 chat 信封共用的工具）迁入 core.net。
+- [x] 大字符串 SUMMARY_SYSTEM_PROMPT 用脚本按源码区间精确搬运，零手抄、零改动。
+- 依赖链无环：memory → core + session.session + memory_store(底层库)；server 仅 import 回这些符号。
+- 验证：全部 py_compile 通过；import server 成功，记忆各函数身份均指向 memory 模块，_extract_json 指向 core.net；
+      端到端实跑（DB 指向 /tmp 绕开挂载盘 sqlite 限制）：build_injected_memory 正常返回、run_summary 完整跑通
+      到 API 调用（仅因沙箱无外网 403 失败，逻辑/重试/错误处理均正确）。
+- server.py 累计：3754 -> 2900 行级别。已抽出 core / session / chat.scene / prompts / memory 五块。

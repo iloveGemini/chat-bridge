@@ -65,3 +65,28 @@ def _safe_decode(data):
 def _safe_name(name):
     """只允许字母数字下划线短横线，防止路径穿越。"""
     return "".join(c for c in (name or "") if c.isalnum() or c in "-_")
+
+
+def _extract_json(text):
+    """从 LLM 输出里抠出第一个 JSON 对象（容忍 ``` 围栏和前后废话）。"""
+    if not text:
+        return None
+    import re
+
+    t = text.strip()
+    m = re.search(r"```(?:json)?\s*(.*?)```", t, re.S)
+    if m:
+        t = m.group(1).strip()
+    start, end = t.find("{"), t.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        return None
+    try:
+        return json.loads(t[start : end + 1])
+    except Exception:
+        return None
+
+
+# ================= 结构化输出信封：解析 + 场景闩锁 =================
+# AI 每轮回复用 <msg> 信封包裹：可选 <scene/> 元数据 + <content> 正文。
+# 系统解析后只把 <content> 发前端 / 落库，<scene> 驱动后台时空状态机。
+# 容错铁律：信封缺失或标签破损时，绝不报错——剥掉已知标签后整段当正文，宁可丢一次结构化也不让用户收到空消息。
