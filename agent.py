@@ -174,6 +174,13 @@ def init_db():
             card      TEXT,
             ts        TEXT
         );
+        CREATE TABLE IF NOT EXISTS context_cache (
+            task_id   TEXT,
+            filepath  TEXT,
+            mode      TEXT DEFAULT 'outline',
+            ts        TEXT,
+            PRIMARY KEY (task_id, filepath)
+        );
         CREATE INDEX IF NOT EXISTS idx_turns_task ON turns(task_id, id);
         """
     )
@@ -259,6 +266,7 @@ def delete_task(task_id):
         con.execute("DELETE FROM tasks WHERE id=?", (task_id,))
         con.execute("DELETE FROM turns WHERE task_id=?", (task_id,))
         con.execute("DELETE FROM checkpoints WHERE task_id=?", (task_id,))
+        con.execute("DELETE FROM context_cache WHERE task_id=?", (task_id,))
 
 
 # ---- turns（完整事件流，供前端回放） --------------------------------------
@@ -305,6 +313,94 @@ def save_checkpoint(task_id, card, version):
             " ON CONFLICT(task_id) DO UPDATE SET version=?,card=?,ts=?",
             (task_id, version, payload, _now(), version, payload, _now()),
         )
+
+
+# ---- 固定上下文缓存（钉住的参考文件，长期注入，不随聊天滚动） ----
+def list_context(task_id):
+    with _conn() as con:
+        rows = con.execute(
+            "SELECT filepath, mode, ts FROM context_cache WHERE task_id=? ORDER BY ts",
+            (task_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def add_context(task_id, filepath, mode="outline"):
+    if not filepath:
+        return {"ok": False, "error": "filepath 必填"}
+    mode = "full" if mode == "full" else "outline"
+    with _db_lock, _conn() as con:
+        con.execute(
+            "INSERT INTO context_cache(task_id,filepath,mode,ts) VALUES(?,?,?,?)"
+            " ON CONFLICT(task_id,filepath) DO UPDATE SET mode=?,ts=?",
+            (task_id, filepath, mode, _now(), mode, _now()),
+        )
+    _log(f"📌 钉住上下文[{task_id}] {filepath} ({mode})")
+    return {"ok": True, "filepath": filepath, "mode": mode}
+
+
+def remove_context(task_id, filepath):
+    with _db_lock, _conn() as con:
+        con.execute(
+            "DELETE FROM context_cache WHERE task_id=? AND filepath=?",
+            (task_id, filepath),
+        )
+    _log(f"📌 移除上下文[{task_id}] {filepath}")
+    return {"ok": True}
+
+
+def list_workspace_files(task_id, limit=800):
+    """列举任务工作区里的文件相对路径（给前端 Add Path 选择用）。"""
+    t = get_task(task_id)
+    if not t:
+        return []
+    root = Path(t["workspace"]).resolve()
+    if not root.exists():
+        return []
+    out = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [
+            d for d in dirnames if d not in WS_IGNORE and not d.startswith(".")
+        ]
+        for fn in sorted(filenames):
+            if fn.startswith("."):
+                continue
+            rel = str(Path(dirpath, fn).relative_to(root)).replace("\\", "/")
+            out.append(rel)
+            if len(out) >= limit:
+                return sorted(out)
+    return sorted(out)
+
+
+def _render_pinned_context(task):
+    """把钉住的文件渲染成注入文本：outline 只给结构，full 给带行号全码。"""
+    entries = list_context(task["id"])
+    if not entries:
+        return ""
+    ctx = _sandbox_context(task)
+    blocks = []
+    for e in entries:
+        fp, mode = e["filepath"], e.get("mode", "outline")
+        if mode == "full":
+            r = tooling.execute_tool("read_file_with_lines", {"filepath": fp}, ctx)
+            body = (
+                f"(读取失败: {r['error']})"
+                if r.get("error")
+                else (r.get("content", "") or "")[:8000]
+            )
+            blocks.append(f"### {fp} (全代码)\n{body}")
+        else:
+            r = tooling.execute_tool("get_outline", {"filepath": fp}, ctx)
+            if r.get("error"):
+                body = f"(大纲失败: {r['error']})"
+            else:
+                body = "\n".join(
+                    f"- [{x['type']}] {x['name']}  L{x['start_line']}-{x['end_line']}"
+                    + (f"  // {x['doc']}" if x.get("doc") else "")
+                    for x in r.get("symbols", [])
+                ) or "(无符号)"
+            blocks.append(f"### {fp} (大纲)\n{body}")
+    return "\n\n".join(blocks)
 
 
 # ---------------------------------------------------------------------------
@@ -533,6 +629,15 @@ def _build_messages(task, checkpoint, recent_turns, user_msg):
             + (tree or "(空：还没有任何文件)"),
         }
     )
+    pinned = _render_pinned_context(task)
+    if pinned:
+        msgs.append(
+            {
+                "role": "system",
+                "content": "【固定上下文（已钉住的参考文件，长期保留，每轮刷新）】\n"
+                "可用 pin_file/unpin_file 自行增减。\n\n" + pinned,
+            }
+        )
     if checkpoint and checkpoint.get("card"):
         msgs.append(
             {
@@ -668,7 +773,44 @@ def get_orchestration_tools():
                     "required": ["questions"],
                 },
             },
-        }
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "pin_file",
+                "description": (
+                    "把一个文件【钉进固定上下文】：之后每一轮都会自动把它给你看，不随聊天滚动被挤掉。"
+                    "mode='outline' 只给结构大纲(省 token，适合大文件/只需结构)；mode='full' 给带行号全代码"
+                    "(适合反复要改/通读的小文件)。用于你需要长期参考的文件，省得反复 read。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "filepath": {"type": "string", "description": "相对工作区根的文件路径"},
+                        "mode": {
+                            "type": "string",
+                            "enum": ["outline", "full"],
+                            "description": "outline=只看结构(默认) / full=看全代码",
+                        },
+                    },
+                    "required": ["filepath"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "unpin_file",
+                "description": "从固定上下文移除一个之前钉住的文件（不再每轮注入）。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "filepath": {"type": "string", "description": "要移除的文件路径"}
+                    },
+                    "required": ["filepath"],
+                },
+            },
+        },
     ]
 
 
@@ -902,6 +1044,12 @@ def run_agent_turn(task_id, user_msg, on_event=None):
                 _tc, _fname, _fargs = call
                 if _fname == "explore_codebase":
                     return run_explore(task, _fargs, emit=lambda k, d: emit(k, d))
+                if _fname == "pin_file":
+                    return add_context(
+                        task_id, _fargs.get("filepath"), _fargs.get("mode", "outline")
+                    )
+                if _fname == "unpin_file":
+                    return remove_context(task_id, _fargs.get("filepath"))
                 if _fname in tooling.CODING_TOOL_NAMES:
                     if _fname == "run_terminal_command" and _is_py_cmd(
                         _fargs.get("command", "")
@@ -1039,53 +1187,4 @@ def _cli():
     p_new.add_argument("goal")
     p_new.add_argument("--title", default=None)
     p_run = sub.add_parser("run", help="对已有任务发一条消息")
-    p_run.add_argument("task_id")
-    p_run.add_argument("msg")
-    sub.add_parser("list", help="列出所有任务")
-    p_show = sub.add_parser("show", help="查看任务进度卡与事件流")
-    p_show.add_argument("task_id")
-    args = ap.parse_args()
-    init_db()
-
-    def printer(kind, data):
-        if kind == "tool_call":
-            print(
-                f"  [TOOL] {data['name']}({json.dumps(data['args'], ensure_ascii=False)[:80]})"
-            )
-        elif kind == "subagents_start":
-            print(
-                f"  [FANOUT] 并发 {data['count']} 个子 agent (上限 {data['max_concurrency']})"
-            )
-        elif kind == "subagent_done":
-            print(f"  [DONE] 子任务[{data.get('id')}]: {str(data.get('result'))[:60]}")
-        elif kind == "tool_result":
-            print(f"  [RESULT] {json.dumps(data['result'], ensure_ascii=False)[:120]}")
-        elif kind == "assistant":
-            print(f"\n[AI] {data}\n")
-        elif kind == "checkpoint":
-            print(f"  [CARD] {data.get('summary')} ({data.get('progress')}%)")
-
-    if args.cmd == "new":
-        t = create_task(args.title or args.goal[:20], args.goal)
-        print("任务:", t["id"], "工作区:", t["workspace"])
-        run_agent_turn(t["id"], args.goal, on_event=printer)
-    elif args.cmd == "run":
-        run_agent_turn(args.task_id, args.msg, on_event=printer)
-    elif args.cmd == "list":
-        for t in list_tasks():
-            print(f"{t['id']}  [{t['status']}] {t['progress']:>3}%  {t['title']}")
-    elif args.cmd == "show":
-        cp = get_checkpoint(args.task_id)
-        print("=== 进度卡 ===")
-        print(json.dumps(cp["card"] if cp else {}, ensure_ascii=False, indent=2))
-        print("\n=== 事件流 ===")
-        for t in get_turns(args.task_id):
-            print(
-                f"[{t['type']}] {t.get('tool_name') or t['role']}: {t['content'][:120]}"
-            )
-    else:
-        ap.print_help()
-
-
-if __name__ == "__main__":
-    _cli()
+  

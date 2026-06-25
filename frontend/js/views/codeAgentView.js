@@ -20,6 +20,7 @@ class CodeAgentView {
     this._lastTurnId = 0;
     this._pollTimer = null;
     this.workspaceTree = "";
+    this.pinnedContext = [];
   }
 
   els() {
@@ -71,9 +72,10 @@ class CodeAgentView {
       }
     });
 
-    e.filesPanel.addEventListener("click", (ev) => {
+    e.filesPanel.addEventListener("click", async (ev) => {
       if (ev.target.classList.contains("remove-file")) {
-        this.removeFileFromWorkspace(ev.target.dataset.file);
+        await api.agentContextRemove(this.currentTaskId, ev.target.dataset.file);
+        this.refreshContext();
       }
     });
 
@@ -83,9 +85,7 @@ class CodeAgentView {
     const fileTreeList = document.getElementById("ca-file-tree-list");
 
     if (e.addCtxBtn) {
-      e.addCtxBtn.addEventListener("click", () => {
-        showToast("工作区文件由 Agent 在沙箱内自动管理");
-      });
+      e.addCtxBtn.addEventListener("click", () => this.openContextPicker());
     }
     if (serverModalClose && serverModal) {
       serverModalClose.addEventListener("click", () => {
@@ -320,10 +320,102 @@ class CodeAgentView {
         const card = res.checkpoint || {};
         const status = card.summary || res.task.status || "运行中";
         this.updateTask(status, res.task.progress || card.progress || 0);
-        this.workspaceTree = res.tree || "";
+      }
+      await this.refreshContext();
+    } catch (e) {}
+  }
+
+  // 拉取该任务钉住的固定上下文（agent / 用户都可能改）
+  async refreshContext() {
+    try {
+      const res = await api.agentContext(this.currentTaskId);
+      if (res && res.ok) {
+        this.pinnedContext = res.context || [];
         this.renderFiles();
       }
     } catch (e) {}
+  }
+
+  // 打开「固定上下文」选择器：从工作区文件里挑，选 大纲/全代码 钉住
+  async openContextPicker() {
+    const ov = document.createElement("div");
+    ov.style.cssText =
+      "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;display:flex;align-items:center;justify-content:center;";
+    const box = document.createElement("div");
+    box.style.cssText =
+      "width:92%;max-width:560px;max-height:82vh;display:flex;flex-direction:column;background:#1e1e1e;color:#ddd;border:1px solid #333;border-radius:8px;overflow:hidden;";
+    box.innerHTML =
+      '<div style="padding:11px 14px;border-bottom:1px solid #333;font-weight:bold;font-size:14px;">固定上下文（钉住的文件每轮都注入给 Agent）</div>' +
+      '<div id="_cp_pinned" style="padding:6px 10px;border-bottom:1px solid #2a2a2a;font-size:12px;"></div>' +
+      '<div style="padding:6px 14px;color:#888;font-size:11px;">点文件右侧按钮钉入：大纲(省) / 全代码</div>' +
+      '<div id="_cp_files" style="flex:1;overflow:auto;min-height:160px;"></div>' +
+      '<div style="padding:10px 14px;border-top:1px solid #333;text-align:right;"><button id="_cp_close" style="padding:6px 14px;border:1px solid #3a3a3a;border-radius:5px;background:#2d2d2d;color:#ddd;cursor:pointer;">关闭</button></div>';
+    document.body.appendChild(ov);
+    ov.appendChild(box);
+
+    const taskId = this.currentTaskId;
+    const renderPinned = () => {
+      const wrap = box.querySelector("#_cp_pinned");
+      const items = this.pinnedContext || [];
+      if (!items.length) {
+        wrap.innerHTML = '<span style="color:#666;">（暂未钉住任何文件）</span>';
+        return;
+      }
+      wrap.innerHTML = items
+        .map((c) => {
+          const badge = c.mode === "full" ? "全码" : "大纲";
+          return (
+            '<span style="display:inline-block;margin:2px 4px;padding:2px 6px;background:#2d2d2d;border-radius:4px;">' +
+            badge + " " + escHtml(c.filepath) +
+            ' <span class="_cp_unpin" data-file="' + escHtml(c.filepath) +
+            '" style="color:#f14c4c;cursor:pointer;">✕</span></span>'
+          );
+        })
+        .join("");
+    };
+    const loadFiles = async () => {
+      const filesBox = box.querySelector("#_cp_files");
+      filesBox.innerHTML = '<div style="padding:14px;color:#888;">加载中…</div>';
+      try {
+        const res = await api.agentFiles(taskId);
+        const files = (res && res.ok && res.files) || [];
+        filesBox.innerHTML =
+          files
+            .map(
+              (f) =>
+                '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px;border-bottom:1px solid #2a2a2a;">' +
+                '<span style="font-size:12px;word-break:break-all;flex:1;">' + escHtml(f) + "</span>" +
+                '<span style="white-space:nowrap;margin-left:8px;">' +
+                '<button class="_cp_add" data-f="' + escHtml(f) + '" data-m="outline" style="margin-left:4px;padding:3px 8px;border:1px solid #4ec9b0;border-radius:4px;background:transparent;color:#4ec9b0;cursor:pointer;font-size:12px;">大纲</button>' +
+                '<button class="_cp_add" data-f="' + escHtml(f) + '" data-m="full" style="margin-left:4px;padding:3px 8px;border:1px solid #e0a458;border-radius:4px;background:transparent;color:#e0a458;cursor:pointer;font-size:12px;">全码</button>' +
+                "</span></div>",
+            )
+            .join("") ||
+          '<div style="padding:14px;color:#888;">工作区暂无文件</div>';
+      } catch (e) {
+        filesBox.innerHTML = '<div style="padding:14px;color:#f14c4c;">加载失败: ' + e.message + "</div>";
+      }
+    };
+    box.addEventListener("click", async (ev) => {
+      const add = ev.target.closest("._cp_add");
+      const unpin = ev.target.closest("._cp_unpin");
+      if (add) {
+        await api.agentContextAdd(taskId, add.dataset.f, add.dataset.m);
+        await this.refreshContext();
+        renderPinned();
+        showToast("已钉入: " + add.dataset.f);
+      } else if (unpin) {
+        await api.agentContextRemove(taskId, unpin.dataset.file);
+        await this.refreshContext();
+        renderPinned();
+      }
+    });
+    box.querySelector("#_cp_close").onclick = () => document.body.removeChild(ov);
+    ov.addEventListener("click", (ev) => {
+      if (ev.target === ov) document.body.removeChild(ov);
+    });
+    renderPinned();
+    loadFiles();
   }
 
   updateTask(status, progressPercent) {
@@ -351,29 +443,24 @@ class CodeAgentView {
   renderFiles() {
     const e = this.els();
     if (!e.filesPanel) return;
-    // 优先展示完整沙箱工作区目录树（后端每次 /api/agent/task 返回）
-    if (this.workspaceTree) {
+    const items = this.pinnedContext || [];
+    if (items.length === 0) {
       e.filesPanel.innerHTML =
-        '<pre style="margin:0;color:#9cdcfe;font-size:11px;line-height:1.5;white-space:pre;max-height:26vh;overflow:auto;">' +
-        escHtml(this.workspaceTree) +
-        "</pre>";
+        '<div style="color:#666;font-size:11px;padding-top:4px;">未钉住文件。点上方「+ Add Path」把参考文件钉入固定上下文（每轮注入给 Agent，Agent 也能自己增减）。</div>';
       return;
     }
-    if (this.workspaceFiles.length === 0) {
-      e.filesPanel.innerHTML =
-        '<div style="color:#555;font-size:11px;padding-top:4px;">工作区为空（Agent 尚未创建文件）</div>';
-      return;
-    }
-    e.filesPanel.innerHTML = this.workspaceFiles
-      .map(
-        (f) => `
-      <div class="file-chip ${f.status === "reading" ? "active-reading" : ""}">
-        <span style="color:#9cdcfe;">${f.status === "reading" ? ICONS.loading : ICONS.file}</span>
-        <span style="margin-left:4px;">${escHtml(f.name)}</span>
-        <span class="remove-file" data-file="${escHtml(f.name)}">✕</span>
-      </div>
-    `,
-      )
+    e.filesPanel.innerHTML = items
+      .map((c) => {
+        const full = c.mode === "full";
+        const badge = full ? "全码" : "大纲";
+        const col = full ? "#e0a458" : "#4ec9b0";
+        return `
+      <div class="file-chip">
+        <span style="color:${col};font-size:10px;border:1px solid ${col};border-radius:3px;padding:0 3px;margin-right:4px;">${badge}</span>
+        <span style="word-break:break-all;">${escHtml(c.filepath)}</span>
+        <span class="remove-file" data-file="${escHtml(c.filepath)}" style="margin-left:6px;cursor:pointer;color:#f14c4c;">✕</span>
+      </div>`;
+      })
       .join("");
   }
 

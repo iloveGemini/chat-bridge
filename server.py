@@ -2258,6 +2258,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         "/api/agent/update",
         "/api/agent/interrupt",
         "/api/agent/enqueue",
+        "/api/agent/context/add",
+        "/api/agent/context/remove",
     }
     NO_SESSION_GET_PATHS = {
         "/api/sessions/list",
@@ -2269,6 +2271,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         "/api/agent/task",
         "/api/agent/turns",
         "/api/agent/last_prompt",
+        "/api/agent/context",
+        "/api/agent/files",
         "/api/logs",
         "/api/fs/list",
     }
@@ -3131,6 +3135,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             else:
                 self._json({"ok": False, "error": "task_id/text 必填"})
 
+        elif path == "/api/agent/context/add":
+            data = self._read_json()
+            self._json(agent.add_context(
+                data.get("task_id"), data.get("filepath"), data.get("mode") or "outline"
+            ))
+
+        elif path == "/api/agent/context/remove":
+            data = self._read_json()
+            self._json(agent.remove_context(data.get("task_id"), data.get("filepath")))
+
         else:
             self._json({"ok": False, "error": "not found"}, 404)
 
@@ -3590,6 +3604,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if path == "/api/agent/last_prompt":
             tid = query.get("id", [""])[0]
             self._json({"ok": True, "last_prompt": agent.get_last_prompt(tid)})
+            return
+
+        if path == "/api/agent/context":
+            tid = query.get("id", [""])[0]
+            self._json({"ok": True, "context": agent.list_context(tid)})
+            return
+
+        if path == "/api/agent/files":
+            tid = query.get("id", [""])[0]
+            self._json({"ok": True, "files": agent.list_workspace_files(tid)})
             return
 
         if path == "/api/fs/list":

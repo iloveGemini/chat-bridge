@@ -128,6 +128,10 @@ class ApiService {
   fetchLogs(after) { return this.get('/api/logs?after=' + (after || 0)); }
   agentLastPrompt(id) { return this.get('/api/agent/last_prompt?id=' + encodeURIComponent(id)); }
   fsList(path) { return this.get('/api/fs/list?path=' + encodeURIComponent(path || '')); }
+  agentContext(id) { return this.get('/api/agent/context?id=' + encodeURIComponent(id)); }
+  agentFiles(id) { return this.get('/api/agent/files?id=' + encodeURIComponent(id)); }
+  agentContextAdd(task_id, filepath, mode) { return this.post('/api/agent/context/add', { task_id, filepath, mode }); }
+  agentContextRemove(task_id, filepath) { return this.post('/api/agent/context/remove', { task_id, filepath }); }
 
   // ---- 系统 ----
   fetchConfig() { return this.get('/api/config'); }
