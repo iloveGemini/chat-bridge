@@ -112,3 +112,14 @@
       实跑信封解析（scene_3/emotion=happy/voice_text 保留 <#0.4#>）、ingest 场景闩锁推进、
       旁白剥离、TTS 未开启返回 None —— 全部正确。
 - server.py 累计：3754 -> 2480 行级别。已抽出 core/session/chat(scene+envelope+tts)/prompts/memory。
+
+## 模块化拆分 (server 瘦身, 第 6 刀: proactive + outreach + notify)
+- [x] 新建 chat/notify.py：_detect_lan_ip / _resolved_notify_cfg / _push_notify，外加 LAN_BASE 的
+      get_lan_base/set_lan_base 访问器（替代原 server 的可变全局，杜绝 from-import 绑定到旧值）。
+- [x] 新建 chat/outreach.py：_get_last_user_ts、_generate_proactive_message、_fire_outreach、
+      _outreach_enabled、_outreach_tool_defs、_parse_when、_exec_outreach_tool。
+- [x] server bootstrap 的 `LAN_BASE = ...` 改为 set_lan_base(...)；删除 server 的 LAN_BASE 全局。
+- 依赖链无环：outreach → core + prompts + memory + chat(envelope/scene/notify) + session + scheduler。
+- 验证：全部 py_compile 通过；import server 成功，相关函数身份均指向新模块；
+      LAN holder set/get 生效、外联工具定义(schedule/list/cancel)、_parse_when(daily/once+2h) 均正确。
+- server.py 累计：3754 -> 2200 行级别。
