@@ -123,3 +123,14 @@
 - 验证：全部 py_compile 通过；import server 成功，相关函数身份均指向新模块；
       LAN holder set/get 生效、外联工具定义(schedule/list/cancel)、_parse_when(daily/once+2h) 均正确。
 - server.py 累计：3754 -> 2200 行级别。
+
+## 模块化拆分 (server 瘦身, 第 7 刀: call_llm_api 主聊天链路)
+- [x] 新建 chat/llm.py：call_llm_api（RP 三明治拼装 + 原生 tool_calls 多轮循环 + 信封落库 + 记忆触发）、
+      _safe_resolve_path（路径安全卫士）、API_REQUEST_TIMESTAMPS（滑动窗口限流，仅其内部用）。
+      顺手删掉死的 `global LAST_API_REQUEST_TIME`。
+- [x] 新建 session/tools.py：SESSION_TOOL_KEYS/DEFAULTS + get_session_tools/set_session_tools
+      （llm 与 server 路由都要用，放 session 域避免 llm→server 回环）。
+- 依赖链无环：llm → core + prompts + memory + chat(envelope/scene/outreach) + session(session/tools) + tooling。
+- 验证：全部 py_compile 通过；import server 成功，call_llm_api/get_session_tools/set_session_tools 身份均指向新模块；
+      会话工具授权读写闭环正确、_safe_resolve_path 越界拦截、限流表就位。
+- server.py 累计：3754 -> 1700 行级别，已基本只剩 HTTP 层（Handler + 路由 + bootstrap）。
