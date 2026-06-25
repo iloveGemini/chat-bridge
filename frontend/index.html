@@ -920,6 +920,26 @@
               placeholder="输入指令或挂载本地文件..."
               rows="1"
             ></textarea>
+            <!-- 排队补充按钮（agent 工作时显示：不打断，并入下一轮）-->
+            <svg
+              id="ca-queue-btn"
+              title="排队补充信息（不打断，并入下一轮）"
+              style="display: none; color: #4ec9b0; cursor: pointer; margin-left: 4px"
+              viewBox="0 0 24 24"
+              width="20"
+              height="20"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <line x1="3" y1="6" x2="15" y2="6"></line>
+              <line x1="3" y1="12" x2="11" y2="12"></line>
+              <line x1="3" y1="18" x2="15" y2="18"></line>
+              <line x1="19" y1="9" x2="19" y2="15"></line>
+              <line x1="16" y1="12" x2="22" y2="12"></line>
+            </svg>
             <!-- 文本发送按钮 -->
             <svg
               id="ca-send-btn"

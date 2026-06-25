@@ -1,26 +1,15 @@
-import { formatTime } from "../utils.js";
+import { formatTime, showToast } from "../utils.js";
+import { api } from "../api.js";
 import { codeAgentView } from "./codeAgentView.js";
+
+const BTN = "padding:6px 12px;border:1px solid #3a3a3a;border-radius:5px;background:#2d2d2d;color:#ddd;cursor:pointer;font-size:13px;";
+const BTN_PRIMARY = "padding:6px 12px;border:1px solid #0a6cc4;border-radius:5px;background:#0a6cc4;color:#fff;cursor:pointer;font-size:13px;";
 
 class CodeAgentHubView {
   constructor() {
     this._bound = false;
-    this.tasks = [
-      {
-        id: "t1",
-        title: "重构前端 API 模块",
-        status: "进行中",
-        progress: 40,
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: "t2",
-        title: "修复 Login 页面样式 Bug",
-        status: "已挂起",
-        progress: 80,
-        updatedAt: new Date(Date.now() - 86400000).toISOString(),
-      },
-    ];
-    this.activeSwipeEl = null; // 当前滑开的元素
+    this.tasks = [];
+    this.activeSwipeEl = null;
   }
 
   els() {
@@ -30,24 +19,128 @@ class CodeAgentHubView {
     };
   }
 
+  _map(t) {
+    return {
+      id: t.id,
+      title: t.title,
+      status: t.status,
+      progress: t.progress || 0,
+      updatedAt: t.updated_at || t.created_at || new Date().toISOString(),
+    };
+  }
+
+  async refresh() {
+    try {
+      const res = await api.agentTasks();
+      this.tasks = (res && res.ok ? res.tasks : []).map((t) => this._map(t));
+    } catch (e) {
+      this.tasks = [];
+    }
+    this.render();
+  }
+
+  // 服务端文件夹选择器。resolve 为 {mode:'in_place',dir} / {mode:'blank'} / null(取消)
+  pickFolder() {
+    return new Promise((resolve) => {
+      const ov = document.createElement("div");
+      ov.style.cssText =
+        "position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;display:flex;align-items:center;justify-content:center;";
+      const box = document.createElement("div");
+      box.style.cssText =
+        "width:92%;max-width:520px;max-height:82vh;display:flex;flex-direction:column;background:#1e1e1e;color:#ddd;border:1px solid #333;border-radius:8px;overflow:hidden;";
+      box.innerHTML =
+        '<div style="padding:11px 14px;border-bottom:1px solid #333;font-weight:bold;font-size:14px;">选择项目文件夹（Agent 将直接在其中工作，请先备份/提交 git）</div>' +
+        '<div id="_fp_path" style="padding:8px 14px;color:#9cdcfe;font-size:12px;word-break:break-all;background:#252526;"></div>' +
+        '<div id="_fp_list" style="flex:1;overflow:auto;min-height:180px;"></div>' +
+        '<div style="padding:10px 14px;border-top:1px solid #333;display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">' +
+        '<button id="_fp_up" style="' + BTN + '">上一级</button>' +
+        '<button id="_fp_blank" style="' + BTN + '">空白项目</button>' +
+        '<button id="_fp_cancel" style="' + BTN + '">取消</button>' +
+        '<button id="_fp_pick" style="' + BTN_PRIMARY + '">选此目录</button>' +
+        "</div>";
+      ov.appendChild(box);
+      document.body.appendChild(ov);
+
+      let cur = "";
+      const q = (sel) => box.querySelector(sel);
+      const close = (val) => {
+        document.body.removeChild(ov);
+        resolve(val);
+      };
+      const load = async (path) => {
+        try {
+          const res = await api.fsList(path);
+          if (!res || !res.ok) {
+            showToast((res && res.error) || "读取目录失败");
+            return;
+          }
+          cur = res.path || "";
+          q("#_fp_path").textContent = cur || "（根 / 盘符）";
+          const list = q("#_fp_list");
+          list.dataset.parent = res.parent || "";
+          list.innerHTML =
+            (res.dirs || [])
+              .map((d) => {
+                const name = d.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || d;
+                const safe = d.replace(/"/g, "&quot;");
+                return (
+                  '<div class="_fp_item" data-path="' +
+                  safe +
+                  '" style="padding:10px 14px;border-bottom:1px solid #2a2a2a;cursor:pointer;">📁 ' +
+                  name +
+                  "</div>"
+                );
+              })
+              .join("") ||
+            '<div style="padding:14px;color:#888;">（无子目录）</div>';
+        } catch (e) {
+          showToast("读取目录失败: " + e.message);
+        }
+      };
+
+      q("#_fp_list").addEventListener("click", (ev) => {
+        const it = ev.target.closest("._fp_item");
+        if (it) load(it.dataset.path);
+      });
+      q("#_fp_up").onclick = () => load(q("#_fp_list").dataset.parent || "");
+      q("#_fp_cancel").onclick = () => close(null);
+      q("#_fp_blank").onclick = () => close({ mode: "blank" });
+      q("#_fp_pick").onclick = () => {
+        if (!cur) {
+          showToast("请先进入一个目录");
+          return;
+        }
+        close({ mode: "in_place", dir: cur });
+      };
+      ov.addEventListener("click", (ev) => {
+        if (ev.target === ov) close(null);
+      });
+      load(""); // 从盘符/根开始
+    });
+  }
+
   bindOnce() {
     if (this._bound) return;
     this._bound = true;
     const e = this.els();
 
-    e.newBtn.addEventListener("click", () => {
+    e.newBtn.addEventListener("click", async () => {
       const title = prompt("请输入新任务名称:", "新需求开发");
       if (!title) return;
-      const newTask = {
-        id: "t" + Date.now(),
-        title,
-        status: "准备就绪",
-        progress: 0,
-        updatedAt: new Date().toISOString(),
-      };
-      this.tasks.unshift(newTask);
-      this.render();
-      codeAgentView.open(newTask.id, newTask.title);
+      const pick = await this.pickFolder();
+      if (pick === null) return; // 取消
+      const payload = { title, goal: title };
+      if (pick.mode === "in_place" && pick.dir) payload.work_dir = pick.dir;
+      try {
+        const res = await api.agentCreate(payload);
+        if (res && res.ok && res.task) {
+          this.tasks.unshift(this._map(res.task));
+          this.render();
+          codeAgentView.open(res.task.id, res.task.title);
+        }
+      } catch (err) {
+        alert("创建失败: " + err.message);
+      }
     });
 
     // === 左滑逻辑 ===
@@ -59,7 +152,6 @@ class CodeAgentHubView {
       (ev) => {
         const item = ev.target.closest(".ca-task-item");
         if (!item) return;
-        // 点击其他地方时，收起已经打开的滑块
         if (this.activeSwipeEl && this.activeSwipeEl !== item) {
           this.activeSwipeEl.style.transform = `translateX(0px)`;
           this.activeSwipeEl = null;
@@ -77,7 +169,6 @@ class CodeAgentHubView {
         if (!item) return;
         currentX = ev.touches[0].clientX;
         let diff = currentX - startX;
-        // 只允许向左滑动 (3个按钮，每个60px，最大滑动-180px)
         if (diff < 0) {
           item.style.transform = `translateX(${Math.max(diff, -180)}px)`;
           item.style.transition = "none";
@@ -91,8 +182,6 @@ class CodeAgentHubView {
       if (!item) return;
       let diff = currentX - startX;
       item.style.transition = "transform 0.2s ease-out";
-
-      // 滑动超过 60px 自动展开，否则收回
       if (diff < -60) {
         item.style.transform = `translateX(-180px)`;
         this.activeSwipeEl = item;
@@ -102,35 +191,41 @@ class CodeAgentHubView {
       }
     });
 
-    // === 列表点击代理 (包含按钮和进入终端) ===
-    e.list.addEventListener("click", (ev) => {
+    // === 列表点击代理 ===
+    e.list.addEventListener("click", async (ev) => {
       const btn = ev.target.closest(".ca-task-action-btn");
       const item = ev.target.closest(".ca-task-item");
 
       if (btn && item) {
-        // 点击了后面的操作按钮
         const action = btn.dataset.action;
         const taskId = item.dataset.id;
-
-        if (action === "delete") {
-          this.tasks = this.tasks.filter((t) => t.id !== taskId);
-        } else if (action === "archive") {
-          const t = this.tasks.find((t) => t.id === taskId);
-          if (t) t.status = "已归档";
-        } else if (action === "pin") {
-          const idx = this.tasks.findIndex((t) => t.id === taskId);
-          if (idx > 0) {
-            const [t] = this.tasks.splice(idx, 1);
-            this.tasks.unshift(t);
+        try {
+          if (action === "delete") {
+            await api.agentDelete(taskId);
+            this.tasks = this.tasks.filter((t) => t.id !== taskId);
+          } else if (action === "archive") {
+            await api.agentUpdate({ task_id: taskId, status: "已归档" });
+            const t = this.tasks.find((t) => t.id === taskId);
+            if (t) t.status = "已归档";
+          } else if (action === "pin") {
+            await api.agentUpdate({
+              task_id: taskId,
+              status: this.tasks.find((t) => t.id === taskId)?.status || "就绪",
+            });
+            const idx = this.tasks.findIndex((t) => t.id === taskId);
+            if (idx > 0) {
+              const [t] = this.tasks.splice(idx, 1);
+              this.tasks.unshift(t);
+            }
           }
+        } catch (err) {
+          alert("操作失败: " + err.message);
         }
-        // 重置滑动状态并重新渲染
         this.activeSwipeEl = null;
         this.render();
         return;
       }
 
-      // 如果点击主体且当前元素没有被滑开，则进入终端
       if (item && item !== this.activeSwipeEl) {
         codeAgentView.open(item.dataset.id, item.dataset.title);
       }
@@ -140,7 +235,7 @@ class CodeAgentHubView {
   open() {
     window.router.pushView("code-agent-hub-view");
     this.bindOnce();
-    this.render();
+    this.refresh();
   }
 
   render() {
@@ -149,7 +244,7 @@ class CodeAgentHubView {
 
     if (this.tasks.length === 0) {
       e.list.innerHTML =
-        '<div style="text-align:center; color:#888; margin-top:50px;">暂无任务</div>';
+        '<div style="text-align:center; color:#888; margin-top:50px;">暂无任务，点右上角新建</div>';
       return;
     }
 
@@ -162,7 +257,7 @@ class CodeAgentHubView {
           <div class="ca-task-action-btn btn-archive" data-action="archive">归档</div>
           <div class="ca-task-action-btn btn-delete" data-action="delete">删除</div>
         </div>
-        
+
         <div class="ca-task-item" data-id="${t.id}" data-title="${t.title}">
           <div style="display:flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
             <strong style="font-size: 16px; color: var(--text-color);">${t.title}</strong>

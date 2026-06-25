@@ -5,6 +5,7 @@
 """
 
 import json
+import os
 import re
 import subprocess
 
@@ -15,6 +16,8 @@ CODING_TOOL_NAMES = {
     "batch_write_files",
     "run_terminal_command",
     "grep_files",
+    "glob_files",
+    "replace_in_file",
 }
 
 PROMPT_CATEGORIES = ["main", "character", "user", "style", "post"]
@@ -33,14 +36,22 @@ def get_coding_tools():
             "type": "function",
             "function": {
                 "name": "read_file_with_lines",
-                "description": "读取本地文件内容。返回的内容会自动在最前面加上行号。",
+                "description": "读取本地文件内容，自动在每行前加行号。大文件可用 offset/limit 只读取一段，避免撑爆上下文。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "filepath": {
                             "type": "string",
                             "description": "相对于项目根目录的文件路径。",
-                        }
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "description": "可选。起始行号(0 基)，从第几行开始读，默认 0。",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "可选。最多读取多少行，默认读到文件末尾。",
+                        },
                     },
                     "required": ["filepath"],
                 },
@@ -113,11 +124,15 @@ def get_coding_tools():
             "type": "function",
             "function": {
                 "name": "run_terminal_command",
-                "description": "在项目根目录下执行终端命令（如运行测试、跑脚本、检查语法），并获取终端日志。超时限制 30 秒。",
+                "description": "在项目根目录下执行终端命令（运行测试、跑脚本、装包、构建等），返回 stdout/stderr/exit_code。默认超时 180 秒，装包/构建/大测试套件可用 timeout 调长。",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "command": {"type": "string", "description": "要执行的命令"}
+                        "command": {"type": "string", "description": "要执行的命令"},
+                        "timeout": {
+                            "type": "integer",
+                            "description": "可选。超时秒数，默认 180，最大 1800。装包/构建可调大。",
+                        },
                     },
                     "required": ["command"],
                 },
@@ -154,6 +169,38 @@ def get_coding_tools():
                         },
                     },
                     "required": ["pattern"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "glob_files",
+                "description": "按通配符列出/查找文件（如 *.py、**/*.js、src/*）。用于了解目录结构、定位文件，避免盲读。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "pattern": {"type": "string", "description": "通配符，如 *.py 或 **/*.js"},
+                        "dirpath": {"type": "string", "description": "起始目录，默认 '.'"},
+                    },
+                    "required": ["pattern"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "replace_in_file",
+                "description": "【精确替换改文件】把文件中的 old_string 整段替换成 new_string，按内容定位而非行号，更稳。old_string 必须在文件中唯一（多处出现请加大上下文使其唯一，或设 replace_all=true 全替）。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "filepath": {"type": "string", "description": "相对项目根的文件路径"},
+                        "old_string": {"type": "string", "description": "要被替换的原文（含足够上下文以唯一定位）"},
+                        "new_string": {"type": "string", "description": "替换后的新内容"},
+                        "replace_all": {"type": "boolean", "description": "是否替换全部出现，默认 false（仅替换唯一一处）"},
+                    },
+                    "required": ["filepath", "old_string", "new_string"],
                 },
             },
         },
@@ -711,14 +758,22 @@ def execute_tool(name, args, context):
                 if not target_file.exists() or not target_file.is_file():
                     return {"error": "文件不存在"}
                 lines = target_file.read_text(encoding="utf-8").splitlines()
+                total = len(lines)
+                start = max(0, int(args.get("offset") or 0))
+                limit = args.get("limit")
+                end = total if limit in (None, "", 0) else min(total, start + int(limit))
+                sel = lines[start:end]
                 numbered_content = "\n".join(
-                    f"{str(i + 1).rjust(4)} | {line}" for i, line in enumerate(lines)
+                    f"{str(start + i + 1).rjust(4)} | {line}" for i, line in enumerate(sel)
                 )
-                return {
+                res = {
                     "filepath": args.get("filepath"),
-                    "total_lines": len(lines),
+                    "total_lines": total,
                     "content": numbered_content,
                 }
+                if start > 0 or end < total:
+                    res["range"] = f"{start + 1}-{end} / {total}"
+                return res
             except ValueError as e:
                 return {"error": str(e)}
 
@@ -765,6 +820,34 @@ def execute_tool(name, args, context):
             except ValueError as e:
                 return {"error": str(e)}
 
+        if name == "replace_in_file":
+            try:
+                target_file = safe_resolve(args.get("filepath"))
+                if not target_file.exists() or not target_file.is_file():
+                    return {"error": "文件不存在"}
+                old = args.get("old_string")
+                new = args.get("new_string")
+                if old is None or new is None:
+                    return {"error": "old_string / new_string 必填"}
+                text = target_file.read_text(encoding="utf-8")
+                cnt = text.count(old)
+                if cnt == 0:
+                    return {"error": "old_string 未在文件中找到，未做修改"}
+                if cnt > 1 and not args.get("replace_all"):
+                    return {
+                        "error": f"old_string 出现 {cnt} 次，不唯一。请加大上下文使其唯一，或设 replace_all=true"
+                    }
+                if args.get("replace_all"):
+                    text = text.replace(old, new)
+                    done = cnt
+                else:
+                    text = text.replace(old, new, 1)
+                    done = 1
+                target_file.write_text(text, encoding="utf-8")
+                return {"ok": True, "msg": f"已在 {target_file.name} 替换 {done} 处"}
+            except ValueError as e:
+                return {"error": str(e)}
+
         if name == "run_terminal_command":
             cmd = args.get("command")
             if not cmd:
@@ -775,6 +858,8 @@ def execute_tool(name, args, context):
                 if sys.platform == "win32" and not cmd.strip().startswith("chcp"):
                     cmd = f"chcp 65001 >nul & {cmd}"
 
+                _to = min(1800, max(1, int(args.get("timeout") or 180)))
+                _env = {**os.environ, **(context.get("env") or {})}
                 result = subprocess.run(
                     cmd,
                     shell=True,
@@ -782,8 +867,9 @@ def execute_tool(name, args, context):
                     text=True,
                     encoding="utf-8",
                     errors="replace",
-                    timeout=30,
+                    timeout=_to,
                     cwd=str(root_dir),
+                    env=_env,
                 )
                 return {
                     "ok": True,
@@ -793,7 +879,7 @@ def execute_tool(name, args, context):
                     "stderr": result.stderr[-3000:] if result.stderr else "",
                 }
             except subprocess.TimeoutExpired:
-                return {"error": "命令执行超时 (30秒)"}
+                return {"error": f"命令执行超时 ({min(1800, max(1, int(args.get('timeout') or 180)))}秒)，可传更大的 timeout 重试"}
             except Exception as e:
                 return {"error": str(e)}
 

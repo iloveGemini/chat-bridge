@@ -14,6 +14,12 @@
     "api_key": "",
     "model": ""
   },
+  "worker_api": {
+    "base_url": "",
+    "api_key": "",
+    "model": "",
+    "rpm": 15
+  },
   "embedding": {
     "enabled": true,
     "base_url": "https://api.siliconflow.cn/v1",
@@ -29,6 +35,9 @@
     "summarize_every": 20,
     "recall_n": 30,
     "top_k": 10
+  },
+  "agent": {
+    "auto_venv": true
   },
   "active_prompts": {
     "main": "default",

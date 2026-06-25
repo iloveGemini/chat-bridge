@@ -21,6 +21,7 @@ import memory_store
 import notify
 import scheduler
 import tooling
+import agent  # 独立的 Code Agent 模块（自驱工具循环 + 沙箱工作区 + 进度卡）
 
 API_REQUEST_TIMESTAMPS = []  # 用一个列表来记录最近请求的时间戳
 
@@ -2292,12 +2293,26 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         "/api/worldbooks/create",
         "/api/worldbooks/update",
         "/api/worldbooks/delete",
+        # Code Agent：均不绑角色会话
+        "/api/agent/create",
+        "/api/agent/send",
+        "/api/agent/delete",
+        "/api/agent/update",
+        "/api/agent/interrupt",
+        "/api/agent/enqueue",
     }
     NO_SESSION_GET_PATHS = {
         "/api/sessions/list",
         "/api/presets/list",
         "/api/presets/get",
         "/api/config",  # ⭐️ 新增：读取全局配置的路由
+        # Code Agent
+        "/api/agent/tasks",
+        "/api/agent/task",
+        "/api/agent/turns",
+        "/api/agent/last_prompt",
+        "/api/logs",
+        "/api/fs/list",
     }
 
     # 鉴权放行：登录接口本身不需要 token（否则没法登录）
@@ -3100,6 +3115,62 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             cfg = set_session_tools(session.session_id, data)
             self._json({"ok": True, "tools": cfg})
 
+        # ================= Code Agent（薄路由，业务全在 agent.py） =================
+        elif path == "/api/agent/create":
+            data = self._read_json()
+            task = agent.create_task(
+                data.get("title") or "新任务",
+                data.get("goal") or "",
+                seed_dir=data.get("seed_dir") or None,
+                work_dir=data.get("work_dir") or None,
+            )
+            self._json({"ok": True, "task": task})
+
+        elif path == "/api/agent/send":
+            data = self._read_json()
+            task_id = data.get("task_id")
+            text = (data.get("text") or "").strip()
+            if not task_id or not text:
+                self._json({"ok": False, "error": "task_id/text 必填"})
+                return
+            if agent.is_running(task_id):
+                self._json({"ok": False, "error": "该任务正在运行中"})
+                return
+            # 后台线程跑，HTTP 立即返回；前端轮询 /api/agent/turns 取进度
+            threading.Thread(
+                target=agent.run_agent_turn, args=(task_id, text), daemon=True
+            ).start()
+            self._json({"ok": True})
+
+        elif path == "/api/agent/delete":
+            data = self._read_json()
+            agent.delete_task(data.get("task_id"))
+            self._json({"ok": True})
+
+        elif path == "/api/agent/update":
+            data = self._read_json()
+            tid = data.pop("task_id", None)
+            if tid:
+                agent.update_task(tid, **data)
+            self._json({"ok": True, "task": agent.get_task(tid) if tid else None})
+
+        elif path == "/api/agent/interrupt":
+            data = self._read_json()
+            tid = data.get("task_id")
+            if tid:
+                agent.request_cancel(tid)
+            self._json({"ok": True})
+
+        elif path == "/api/agent/enqueue":
+            data = self._read_json()
+            tid = data.get("task_id")
+            text = (data.get("text") or "").strip()
+            if tid and text:
+                agent.enqueue_message(tid, text)
+                self._json({"ok": True})
+            else:
+                self._json({"ok": False, "error": "task_id/text 必填"})
+
         else:
             self._json({"ok": False, "error": "not found"}, 404)
 
@@ -3513,7 +3584,104 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             )
             return
 
+        # ================= Code Agent（薄路由） =================
+        if path == "/api/agent/tasks":
+            self._json({"ok": True, "tasks": agent.list_tasks()})
+            return
+
+        if path == "/api/agent/task":
+            tid = query.get("id", [""])[0]
+            task = agent.get_task(tid)
+            if not task:
+                self._json({"ok": False, "error": "not found"}, 404)
+                return
+            cp = agent.get_checkpoint(tid)
+            self._json(
+                {
+                    "ok": True,
+                    "task": task,
+                    "checkpoint": cp["card"] if cp else None,
+                    "running": agent.is_running(tid),
+                    "tree": agent.workspace_tree(tid),
+                }
+            )
+            return
+
+        if path == "/api/agent/turns":
+            tid = query.get("id", [""])[0]
+            after = int(query.get("after", ["0"])[0] or 0)
+            self._json(
+                {
+                    "ok": True,
+                    "turns": agent.get_turns(tid, after),
+                    "running": agent.is_running(tid),
+                }
+            )
+            return
+
+        if path == "/api/logs":
+            after = int(query.get("after", ["0"])[0] or 0)
+            logs = agent.get_debug(after)
+            self._json({"ok": True, "logs": logs, "seq": (logs[-1]["id"] if logs else after)})
+            return
+
+        if path == "/api/agent/last_prompt":
+            tid = query.get("id", [""])[0]
+            self._json({"ok": True, "last_prompt": agent.get_last_prompt(tid)})
+            return
+
+        if path == "/api/fs/list":
+            # 服务端目录浏览（给前端文件夹选择器用）。只返回目录，不返回文件内容。
+            raw = query.get("path", [""])[0]
+            try:
+                import os
+                if not raw:
+                    if os.name == "nt":
+                        import string
+                        roots = [
+                            f"{d}:\\" for d in string.ascii_uppercase
+                            if os.path.exists(f"{d}:\\")
+                        ]
+                        self._json({"ok": True, "path": "", "parent": None, "dirs": roots})
+                    else:
+                        base = Path("/")
+                        dirs = []
+                        for x in sorted(base.iterdir(), key=lambda z: z.name.lower()):
+                            try:
+                                if x.is_dir() and not x.name.startswith("."):
+                                    dirs.append(str(x))
+                            except (PermissionError, OSError):
+                                pass
+                        self._json({"ok": True, "path": "/", "parent": None, "dirs": dirs})
+                    return
+                pp = Path(raw)
+                if not pp.exists() or not pp.is_dir():
+                    self._json({"ok": False, "error": "目录不存在"})
+                    return
+                dirs = []
+                for x in sorted(pp.iterdir(), key=lambda z: z.name.lower()):
+                    try:
+                        if x.is_dir() and not x.name.startswith("."):
+                            dirs.append(str(x))
+                    except (PermissionError, OSError):
+                        pass
+                parent = str(pp.parent) if str(pp.parent) != str(pp) else ""
+                self._json({"ok": True, "path": str(pp), "parent": parent, "dirs": dirs})
+            except Exception as ex:
+                self._json({"ok": False, "error": str(ex)})
+            return
+
         super().do_GET()
+
+    def _read_json(self):
+        """读取并解析 POST body 为 dict，失败返回空 dict。"""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            if not length:
+                return {}
+            return json.loads(_safe_decode(self.rfile.read(length))) or {}
+        except Exception:
+            return {}
 
     def _json(self, data, code=200):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
@@ -3521,11 +3689,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Access-Control-Allow-Origin", "*")
 
-        # 👇 新增下面这 3 行，强制浏览器不缓存 API 结果
         self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.send_header("Pragma", "no-cache")
         self.send_header("Expires", "0")
-        # 👆 ------------------------------------------
 
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -3540,6 +3706,7 @@ if __name__ == "__main__":
     _load_config()
     memory_store.init_db(str(MEMORY_DB))
     scheduler.init_db(str(JOBS_DB))
+    agent.init_db()  # Code Agent 独立库 data/agent.db
     _migrate_legacy_memory()
     # 主动联系调度线程：每 60s 扫一次到点任务，触发 _fire_outreach
     threading.Thread(
@@ -3556,7 +3723,7 @@ if __name__ == "__main__":
     LAN_BASE = f"http://{local_ip}:{PORT}"  # 推送图标相对路径据此补成绝对 URL
 
     print("\n" + "=" * 50)
-    print(" 🚀 Chat Server (Multi-Session & Modular Prompt)")
+    print(" \U0001f680 Chat Server (Multi-Session & Modular Prompt)")
     print(f" Current Mode -> {config.get('mode').upper()}")
     print(f" Web UI URL   -> http://{local_ip}:{PORT}")
     print(f" Sessions Dir -> {SESSIONS_DIR}")
@@ -3571,7 +3738,7 @@ if __name__ == "__main__":
         if d.is_dir():
             get_session(d.name)
     get_session("default")
-    log_print(f"📁 [本地缓存] 已静默预载 {len(sessions_map)} 个角色 Session")
+    log_print(f"\U0001f4c1 [本地缓存] 已静默预载 {len(sessions_map)} 个角色 Session")
 
     server = http.server.ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     try:

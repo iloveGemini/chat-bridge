@@ -115,6 +115,19 @@ class ApiService {
   tts(payload, sid) { return this.postS('/api/tts', payload, sid); }
   ttsOption(key, value) { return this.post('/api/tts/option', { key, value }); }
 
+  // ---- Code Agent ----
+  agentTasks() { return this.get('/api/agent/tasks'); }
+  agentTask(id) { return this.get('/api/agent/task?id=' + encodeURIComponent(id)); }
+  agentTurns(id, after) { return this.get('/api/agent/turns?id=' + encodeURIComponent(id) + '&after=' + (after || 0)); }
+  agentCreate(payload) { return this.post('/api/agent/create', payload); }
+  agentSend(task_id, text) { return this.post('/api/agent/send', { task_id, text }); }
+  agentDelete(task_id) { return this.post('/api/agent/delete', { task_id }); }
+  agentInterrupt(task_id) { return this.post('/api/agent/interrupt', { task_id }); }
+  agentEnqueue(task_id, text) { return this.post('/api/agent/enqueue', { task_id, text }); }
+  fetchLogs(after) { return this.get('/api/logs?after=' + (after || 0)); }
+  agentLastPrompt(id) { return this.get('/api/agent/last_prompt?id=' + encodeURIComponent(id)); }
+  fsList(path) { return this.get('/api/fs/list?path=' + encodeURIComponent(path || '')); }
+
   // ---- 系统 ----
   fetchConfig() { return this.get('/api/config'); }
   saveConfig(configData) { return this.post('/api/config/save', configData); }
