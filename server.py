@@ -1076,59 +1076,6 @@ def summarize_session(session, full=False):
             _set_summ_meta(sid, state="idle")
 
 
-# ================= 设定助手（原生 tool calling）=================
-# 这是一个专用角色：用 OpenAI 原生 tool_calls，帮用户把设定分到「核心(常驻) / 世界书(触发)」、
-# 配触发词、整理预设。硬边界：它只能调下面注册的这几个数据层工具，工具实现只碰 data 层，
-# 注册表里根本没有「改代码/读写文件」这类工具，所以模型从构造上够不到项目代码。
-ASSISTANT_CHAR_KEY = "__assistant__"
-ASSISTANT_MAX_ROUNDS = 8
-
-BUILTIN_ASSISTANT_PROMPT = """你是「设定助手」，这个角色扮演陪聊软件的内置配置助理。你的职责是帮用户把一整套设定配好——角色、世界、用户、文风、预设、世界书——让自定义门槛尽量低、陪聊体验尽量好。你不扮演任何角色，用简洁、务实、口语的中文跟用户协作，多给建议、少说废话。
-
-# 软件的设定体系（你必须懂的背景）
-
-注入给聊天 AI 的内容分这么几块，你的工作就是把它们配好：
-
-1. 提示词文件（一类一个具名文件，可复用到多个会话）：
-   - character 角色设定(persona)：这个角色是谁——身份、性格、说话方式、动机、与用户的关系。
-   - world 世界设定：故事的时代/地点/规则/势力等跨场景稳定的大背景。
-   - user 用户设定：用户在故事里是谁、和角色什么关系、怎么称呼。
-   - main 主提示词：最顶层的总指令/扮演框架（高级，通常不用动）。
-   - style 文风：句子节奏、人称、段落长度、要不要动作神态描写。
-   - post 输出规则：硬性约束，比如禁止出戏、不许替用户行动、长度限制。
-
-2. 预设(preset)：把 main + style + post 三个打成一个包。会话绑定预设后，这三项一起生效。
-   （注意：main/style/post 不能单独绑给会话，必须通过预设生效；world/user/character 可以直接绑。）
-
-3. 世界书(lore)：角色的设定细节库，分两层，这是注意力优化的关键：
-   - 核心层(always_on=true)：角色身份/语气骨架这种「必须永远在场」的，要短，几句话，不需要触发词。
-   - 触发层(keyed)：世界观细节、地点、配角、历史背景这种「只在相关场景才需要」的。每条配触发词，聊天里出现触发词、或当前场景地点/时间命中时才注入。
-
-核心切分原则：persona/world/user 放稳定的大框架；零碎的、只在特定场景相关的细节，一律下放成带触发词的世界书条目。别把一大坨细节全塞进 persona——那会稀释聊天 AI 的注意力。
-
-# 你怎么干活
-1. 先 list_targets 看有哪些会话可配置，跟用户确认配哪一个，拿到 target_session_id；之后所有绑定/世界书操作都带上它。
-2. 动手前先摸现状：list_prompts / get_prompt / list_lore / list_presets，看已有什么，避免覆盖用户辛苦写的东西。
-3. 听用户用大白话描述他想要的角色/故事，由你翻译成规范设定：
-   - 写 persona / world / user：save_prompt 存文件，再 bind_prompt 绑到目标会话。
-   - 配文风：save_prompt 存 style / post，再 save_preset 打成预设，bind_preset 绑给会话。
-   - 拆世界书：判断哪些是核心(always_on)、哪些带触发词，用 add_lore 逐条写。
-4. 每写一批，简短复述你写了什么、为什么这么分，让用户确认；大改先讲方案再动手。
-
-# 怎么把设定写好（你给用户的专业建议）
-- 角色设定：写「具体行为」而非「抽象标签」。不是「她很高冷」，而是「话少，回应常用单字；在意的人面前才会多说，还嘴硬」。给口头禅、习惯动作、底线和软肋、与用户的关系定位。
-- 世界设定：只放跨场景不变的规则和背景，别写具体剧情。具体地点/事件下放世界书。
-- 用户设定：交代清楚用户的身份、与角色的关系、希望被怎么称呼，这样 AI 不会自说自话。
-- 文风：明确人称、句子长短、要不要心理/动作描写、对话与叙述的比例；给一两句范例最有效。
-- 输出规则：写成硬约束清单，比如「不替用户说话/行动」「不剧透未发生的事」「单次回复 ≤N 段」。
-- 触发词：用聊天里真会出现的专有名词——角色名、地名、物件名，并补上别名/简称，命中率才高。
-- 宁可多条短设定，不要一条大杂烩；每条聚焦一个主题，方便单独触发和维护。
-
-# 规矩
-- 只能用提供的工具，且只动数据层（提示词文件 / 预设 / 世界书）。你没有、也绝不声称有读写项目代码或任意文件的能力。
-- 不要覆盖或删除 default 和系统项；改用户已有内容前先 get 看一眼，别盲写。
-- keys 触发词用数组传；常驻条目(always_on)不填 keys。"""
-
 # ====== 会话级工具授权（按会话窗口逐个授权，而非全局总开关）======
 SESSION_TOOL_KEYS = ("outreach", "web", "coding")
 # 默认值与前端开关一致：主动联系默认开，联网检索 / 本地项目操控默认关。
@@ -1161,137 +1108,7 @@ def set_session_tools(session_id, patch):
     return cfg
 
 
-PROTECTED_PROMPT_NAMES = {"default", ASSISTANT_CHAR_KEY}
-
-
-def _list_targets():
-    """列出当前可配置的会话目标，用于设定助手提示。"""
-    targets = []
-    for d in SESSIONS_DIR.iterdir():
-        if not d.is_dir():
-            continue
-        try:
-            s = get_session(d.name)
-            char_name = _get_display_name(
-                "character", s.active_prompts.get("character"), "AI助手"
-            )
-            targets.append({"session_id": d.name, "character_name": char_name})
-        except Exception:
-            continue
-    return targets
-
-
-def call_assistant_api(session_id):
-    """设定助手专用：原生 tool_calls 多轮循环。不走 RP 三明治、不触发记忆总结。"""
-    session = get_session(session_id)
-    _load_config()
-    api_cfg = config.get("api", {})
-
-    with session.lock:
-        session.is_typing = True
-        session.typing_ts = time.time()
-        session.pending_event.set()
-        recent = [
-            m
-            for m in session.messages
-            if m.get("type") not in ("reasoning", "tool_call", "tool_result")
-        ][-40:]
-
-    sys_prompt = BUILTIN_ASSISTANT_PROMPT
-    targets = _list_targets()
-    if targets:
-        hint = "；".join(
-            f"{t['session_id']}→{t['character_name']}" for t in targets[:10]
-        )
-        sys_prompt += f"\n\n[当前可配置的会话] {hint}"
-
-    msgs = [{"role": "system", "content": sys_prompt}]
-    for m in recent:
-        role = m.get("role")
-        if role in ("user", "assistant"):
-            msgs.append({"role": role, "content": m.get("text", "")})
-
-    tools = tooling.get_assistant_tools()
-    url = f"{api_cfg.get('base_url', '').rstrip('/')}/chat/completions"
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_cfg.get('api_key')}",
-    }
-    final_text = ""
-    try:
-        for rnd in range(ASSISTANT_MAX_ROUNDS):
-            payload = {
-                "model": api_cfg.get("model", "deepseek-chat"),
-                "messages": msgs,
-                "tools": tools,
-                "tool_choice": "auto",
-                "temperature": 0.3,
-            }
-            if rnd > 0:
-                time.sleep(0.6)  # 连发之间留个小间隔，别把免费档限速窗口打爆
-            res = _http_post_json(
-                url, payload, headers, timeout=90, tag=f"设定助手·{session_id}"
-            )
-            choice = res["choices"][0]["message"]
-            tcs = choice.get("tool_calls") or []
-            if not tcs:
-                final_text = (choice.get("content") or "").strip()
-                break
-            # 必须把带 tool_calls 的 assistant 消息回放进上下文，再追加每个 tool 结果
-            msgs.append(
-                {
-                    "role": "assistant",
-                    "content": choice.get("content") or "",
-                    "tool_calls": tcs,
-                }
-            )
-            for tc in tcs:
-                fn = tc.get("function", {}) or {}
-                try:
-                    a = json.loads(fn.get("arguments") or "{}")
-                except Exception:
-                    a = {}
-                context = {
-                    "root_dir": ROOT,
-                    "prompts_dir": PROMPTS_DIR,
-                    "sessions_dir": SESSIONS_DIR,
-                    "safe_resolve_cb": _safe_resolve_path,
-                    "get_session_cb": get_session,
-                    "memory_store": memory_store,
-                    "embed_cb": _lore_embedding,
-                }
-                result = tooling.execute_tool(fn.get("name", ""), a, context)
-                msgs.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.get("id"),
-                        "content": json.dumps(result, ensure_ascii=False),
-                    }
-                )
-            log_print(
-                f"🛠️ [设定助手][{session_id}] 第{rnd + 1}轮：执行 {len(tcs)} 个工具 "
-                f"({', '.join((t.get('function') or {}).get('name', '?') for t in tcs)})"
-            )
-        else:
-            final_text = f"（工具调用到了 {ASSISTANT_MAX_ROUNDS} 轮上限，先停一下。把需求说得更具体我再继续。）"
-        if not final_text:
-            final_text = "（工具执行完了，但模型没有给出文字回复。）"
-    except Exception as e:
-        final_text = f"⚠️ 系统提示：{e}"
-        log_print(f"[设定助手] 错误: {e}")
-
-    with session.lock:
-        session.messages.append(
-            {
-                "role": "assistant",
-                "text": final_text,
-                "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                **_scene_stamp(session),
-            }
-        )
-        session.is_typing = False
-        session.pending_event.clear()
-    session.save_messages_async()
+PROTECTED_PROMPT_NAMES = {"default"}
 
 
 # ================= 主动联系调度：触发与生成 =================
@@ -1582,9 +1399,6 @@ def call_llm_api(session_id):
 
     session = get_session(session_id)
     _load_config()
-    # 设定助手走原生 tool calling 通道，不走下面的 RP 三明治
-    if session.active_prompts.get("character") == ASSISTANT_CHAR_KEY:
-        return call_assistant_api(session_id)
     api_cfg = config.get("api", {})
 
     with session.lock:

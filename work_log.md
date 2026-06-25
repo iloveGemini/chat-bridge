@@ -66,3 +66,17 @@
 - [x] 依赖干净：session.py 只依赖 core.paths 与 memory_store（已确认 memory_store 无回环）。
 - 验证：py_compile 通过；import server 成功，ChatSession/get_session/单例身份全部指向 session 模块，
       config 仍跨模块同一；实际 get_session() 建会话、场景闩锁、绑定键均正常；记忆区头注释无重复。
+
+## 删除「设定助手」功能（按需求移除）
+- [x] server.py：删除 BUILTIN_ASSISTANT_PROMPT、ASSISTANT_CHAR_KEY、ASSISTANT_MAX_ROUNDS、
+      _list_targets()、call_assistant_api()，以及 call_llm_api 里指向它的派发分支；
+      PROTECTED_PROMPT_NAMES 改回 {"default"}。
+- [x] tooling.py：删除 get_assistant_tools()、_read_target_session()、execute_tool 内
+      「设定助手部分」的全部工具分支（list_targets/list_lore/add_lore/.../bind_preset）；
+      PROTECTED_PROMPT_NAMES 改回 {"default"}。Coding 代码工具分支完整保留。
+- 验证：server/tooling 均 py_compile 通过；import server 成功，call_llm_api/get_session_tools 健在，
+      call_assistant_api/BUILTIN_ASSISTANT_PROMPT/tooling.get_assistant_tools 已不存在，
+      tooling 编码工具仍 9 个完整可用；前端无任何 设定助手/__assistant__ 引用。
+- 备注（无害遗留，未动）：tools/registry.py 的 get_assistant_tools（新工具系统的通用 legacy 访问器，
+      无调用方）、tools/rp/list_targets.py 里对 "__assistant__" 的防御性过滤。两者都不是设定助手功能本体，
+      留着零风险；要彻底清可下轮顺手删。
