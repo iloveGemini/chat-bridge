@@ -32,7 +32,9 @@ class CodeAgentHubView {
   async refresh() {
     try {
       const res = await api.agentTasks();
-      this.tasks = (res && res.ok ? res.tasks : []).map((t) => this._map(t));
+      this.tasks = (res && res.ok ? res.tasks : [])
+        .filter((t) => t.status !== "已归档")
+        .map((t) => this._map(t));
     } catch (e) {
       this.tasks = [];
     }
@@ -194,38 +196,37 @@ class CodeAgentHubView {
     // === 列表点击代理 ===
     e.list.addEventListener("click", async (ev) => {
       const btn = ev.target.closest(".ca-task-action-btn");
-      const item = ev.target.closest(".ca-task-item");
 
-      if (btn && item) {
+      // 操作按钮与 .ca-task-item 是兄弟节点，要从 swipe-wrap 里取 item
+      if (btn) {
+        const wrap = btn.closest(".ca-task-swipe-wrap");
+        const itemEl = wrap && wrap.querySelector(".ca-task-item");
+        const taskId = itemEl && itemEl.dataset.id;
+        if (!taskId) return;
         const action = btn.dataset.action;
-        const taskId = item.dataset.id;
         try {
           if (action === "delete") {
+            if (!window.confirm("确定删除该任务？此操作不可撤销。")) return;
             await api.agentDelete(taskId);
-            this.tasks = this.tasks.filter((t) => t.id !== taskId);
           } else if (action === "archive") {
             await api.agentUpdate({ task_id: taskId, status: "已归档" });
-            const t = this.tasks.find((t) => t.id === taskId);
-            if (t) t.status = "已归档";
           } else if (action === "pin") {
+            // 触发后端 updated_at 刷新即可冒泡到顶（列表按更新时间倒序）
+            const cur = this.tasks.find((t) => t.id === taskId);
             await api.agentUpdate({
               task_id: taskId,
-              status: this.tasks.find((t) => t.id === taskId)?.status || "就绪",
+              status: (cur && cur.status) || "就绪",
             });
-            const idx = this.tasks.findIndex((t) => t.id === taskId);
-            if (idx > 0) {
-              const [t] = this.tasks.splice(idx, 1);
-              this.tasks.unshift(t);
-            }
           }
         } catch (err) {
           alert("操作失败: " + err.message);
         }
         this.activeSwipeEl = null;
-        this.render();
+        await this.refresh(); // 从后端重新拉取，状态真实
         return;
       }
 
+      const item = ev.target.closest(".ca-task-item");
       if (item && item !== this.activeSwipeEl) {
         codeAgentView.open(item.dataset.id, item.dataset.title);
       }

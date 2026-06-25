@@ -79,7 +79,22 @@ def load_config():
         return {}
 
 
-WS_IGNORE = {".git", "__pycache__", "node_modules", ".venv", "venv", ".DS_Store"}
+WS_IGNORE = {
+    ".git",
+    "__pycache__",
+    "node_modules",
+    ".venv",
+    "venv",
+    ".DS_Store",
+    ".idea",
+    ".vscode",
+    "data",
+    "icons",
+    ".DS_Store",
+    "CLAUDE.md",
+    "MEMORY_SYSTEM.md",
+    "config.json",
+}
 
 
 def _workspace_tree(ws_path, max_depth=4):
@@ -94,7 +109,8 @@ def _workspace_tree(ws_path, max_depth=4):
             return
         try:
             items = [
-                x for x in cur.iterdir()
+                x
+                for x in cur.iterdir()
                 if x.name not in WS_IGNORE and not x.name.startswith(".")
             ]
             items.sort(key=lambda x: (not x.is_dir(), x.name))
@@ -189,10 +205,17 @@ def create_task(title, goal="", seed_dir=None, work_dir=None):
             if src.exists() and src.is_dir():
                 try:
                     shutil.copytree(
-                        src, ws, dirs_exist_ok=True,
+                        src,
+                        ws,
+                        dirs_exist_ok=True,
                         ignore=shutil.ignore_patterns(
-                            ".git", "node_modules", "__pycache__", ".venv", "venv",
-                            ".DS_Store", "*.pyc",
+                            ".git",
+                            "node_modules",
+                            "__pycache__",
+                            ".venv",
+                            "venv",
+                            ".DS_Store",
+                            "*.pyc",
                         ),
                     )
                     _log(f"已把现有项目种入沙箱: {src} -> {ws}")
@@ -262,7 +285,9 @@ def get_turns(task_id, after_id=0):
 # ---- checkpoints（进度卡，Q1 + Q3 的核心） --------------------------------
 def get_checkpoint(task_id):
     with _conn() as con:
-        r = con.execute("SELECT * FROM checkpoints WHERE task_id=?", (task_id,)).fetchone()
+        r = con.execute(
+            "SELECT * FROM checkpoints WHERE task_id=?", (task_id,)
+        ).fetchone()
         if not r:
             return None
         try:
@@ -289,7 +314,10 @@ def _http_post(url, payload, api_key, timeout=120):
     req = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        },
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
@@ -344,13 +372,19 @@ def _chat(cfg_key, messages, tools=None, temperature=0.3, timeout=120):
     rl_key, cfg = _resolve_api(cfg_key)
     base = (cfg.get("base_url") or "").rstrip("/")
     url = f"{base}/chat/completions"
-    payload = {"model": cfg.get("model", "gpt-4o-mini"), "messages": messages, "temperature": temperature}
+    payload = {
+        "model": cfg.get("model", "gpt-4o-mini"),
+        "messages": messages,
+        "temperature": temperature,
+    }
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
     rpm = cfg.get("rpm") or DEFAULT_RPM.get(rl_key, 5)
     _rate_limiter.acquire(rl_key, rpm)
-    _log(f"↗ LLM {rl_key}/{payload['model']} ctx={len(messages)} tools={'Y' if tools else 'N'}")
+    _log(
+        f"↗ LLM {rl_key}/{payload['model']} ctx={len(messages)} tools={'Y' if tools else 'N'}"
+    )
     return _http_post(url, payload, cfg.get("api_key", ""), timeout)
 
 
@@ -379,6 +413,7 @@ def _venv_ensure(task):
         return
     import subprocess
     import sys
+
     ws = Path(task["workspace"]).resolve()
     venv_dir, _bindir, py = _venv_paths(ws)
     if py.exists():
@@ -387,7 +422,9 @@ def _venv_ensure(task):
         _log(f"为任务创建专属 venv: {venv_dir}")
         subprocess.run(
             [sys.executable, "-m", "venv", str(venv_dir)],
-            cwd=str(ws), capture_output=True, timeout=180,
+            cwd=str(ws),
+            capture_output=True,
+            timeout=180,
         )
     except Exception as ex:
         _log(f"创建 venv 失败: {ex}")
@@ -467,7 +504,8 @@ def _build_messages(task, checkpoint, recent_turns, user_msg):
     msgs.append(
         {
             "role": "system",
-            "content": "【工作区文件树（沙箱根目录，每轮刷新）】\n" + (tree or "(空：还没有任何文件)"),
+            "content": "【工作区文件树（沙箱根目录，每轮刷新）】\n"
+            + (tree or "(空：还没有任何文件)"),
         }
     )
     if checkpoint and checkpoint.get("card"):
@@ -482,7 +520,12 @@ def _build_messages(task, checkpoint, recent_turns, user_msg):
         if t["type"] == "text" and t["role"] in ("user", "assistant"):
             msgs.append({"role": t["role"], "content": t["content"]})
         elif t["type"] == "tool_result":
-            msgs.append({"role": "system", "content": f"[工具 {t['tool_name']} 返回] {t['content'][:1500]}"})
+            msgs.append(
+                {
+                    "role": "system",
+                    "content": f"[工具 {t['tool_name']} 返回] {t['content'][:1500]}",
+                }
+            )
     if user_msg:
         msgs.append({"role": "user", "content": user_msg})
     return msgs
@@ -508,8 +551,10 @@ def update_checkpoint(task, new_turns_text):
         {"role": "system", "content": instruction},
         {
             "role": "user",
-            "content": "【旧进度卡】\n" + json.dumps(prev_card, ensure_ascii=False)
-            + "\n\n【本轮新发生的事】\n" + new_turns_text[:6000],
+            "content": "【旧进度卡】\n"
+            + json.dumps(prev_card, ensure_ascii=False)
+            + "\n\n【本轮新发生的事】\n"
+            + new_turns_text[:6000],
         },
     ]
     card = None
@@ -531,7 +576,9 @@ def update_checkpoint(task, new_turns_text):
         card.setdefault("progress", prev_card.get("progress", 10))
 
     save_checkpoint(task["id"], card, version)
-    _log(f"📌 进度卡 v{version} {card.get('progress')}% {card.get('status')} | {str(card.get('summary'))[:40]}")
+    _log(
+        f"📌 进度卡 v{version} {card.get('progress')}% {card.get('status')} | {str(card.get('summary'))[:40]}"
+    )
     return card
 
 
@@ -549,7 +596,11 @@ WORKER_SYSTEM_PROMPT = (
 
 
 def get_worker_tools():
-    return [t for t in tooling.get_coding_tools() if t.get("function", {}).get("name") in WORKER_TOOL_NAMES]
+    return [
+        t
+        for t in tooling.get_coding_tools()
+        if t.get("function", {}).get("name") in WORKER_TOOL_NAMES
+    ]
 
 
 def get_orchestration_tools():
@@ -573,13 +624,22 @@ def get_orchestration_tools():
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "id": {"type": "string", "description": "子任务标识"},
-                                    "instruction": {"type": "string", "description": "具体只读分析指令"},
+                                    "id": {
+                                        "type": "string",
+                                        "description": "子任务标识",
+                                    },
+                                    "instruction": {
+                                        "type": "string",
+                                        "description": "具体只读分析指令",
+                                    },
                                 },
                                 "required": ["instruction"],
                             },
                         },
-                        "max_concurrency": {"type": "integer", "description": f"最大并发，默认 {DEFAULT_WORKER_CONCURRENCY}"},
+                        "max_concurrency": {
+                            "type": "integer",
+                            "description": f"最大并发，默认 {DEFAULT_WORKER_CONCURRENCY}",
+                        },
                     },
                     "required": ["subtasks"],
                 },
@@ -604,8 +664,19 @@ def run_worker(task, subtask, ctx):
             choice = res["choices"][0]["message"]
             tcs = choice.get("tool_calls") or []
             if not tcs:
-                return {"id": sid, "instruction": instruction, "result": (choice.get("content") or "").strip(), "ok": True}
-            msgs.append({"role": "assistant", "content": choice.get("content") or "", "tool_calls": tcs})
+                return {
+                    "id": sid,
+                    "instruction": instruction,
+                    "result": (choice.get("content") or "").strip(),
+                    "ok": True,
+                }
+            msgs.append(
+                {
+                    "role": "assistant",
+                    "content": choice.get("content") or "",
+                    "tool_calls": tcs,
+                }
+            )
             for tc in tcs:
                 fn = tc.get("function", {}) or {}
                 fname = fn.get("name", "")
@@ -617,10 +688,26 @@ def run_worker(task, subtask, ctx):
                     r = tooling.execute_tool(fname, fargs, ctx)
                 else:
                     r = {"error": f"只读 worker 不允许工具: {fname}"}
-                msgs.append({"role": "tool", "tool_call_id": tc.get("id"), "content": json.dumps(r, ensure_ascii=False)})
-        return {"id": sid, "instruction": instruction, "result": "(worker 达最大轮数仍未给出结论)", "ok": False}
+                msgs.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.get("id"),
+                        "content": json.dumps(r, ensure_ascii=False),
+                    }
+                )
+        return {
+            "id": sid,
+            "instruction": instruction,
+            "result": "(worker 达最大轮数仍未给出结论)",
+            "ok": False,
+        }
     except Exception as e:
-        return {"id": sid, "instruction": instruction, "result": f"worker 异常: {e}", "ok": False}
+        return {
+            "id": sid,
+            "instruction": instruction,
+            "result": f"worker 异常: {e}",
+            "ok": False,
+        }
 
 
 def run_spawn_subagents(task, args, emit=None):
@@ -734,7 +821,13 @@ def run_agent_turn(task_id, user_msg, on_event=None):
                 final_text = (choice.get("content") or "").strip()
                 break
 
-            api_messages.append({"role": "assistant", "content": choice.get("content") or "", "tool_calls": tcs})
+            api_messages.append(
+                {
+                    "role": "assistant",
+                    "content": choice.get("content") or "",
+                    "tool_calls": tcs,
+                }
+            )
 
             for tc in tcs:
                 fn = tc.get("function", {}) or {}
@@ -744,14 +837,24 @@ def run_agent_turn(task_id, user_msg, on_event=None):
                 except Exception:
                     fargs = {}
 
-                add_turn(task_id, "assistant", "tool_call", {"name": fname, "args": fargs}, tool_name=fname)
+                add_turn(
+                    task_id,
+                    "assistant",
+                    "tool_call",
+                    {"name": fname, "args": fargs},
+                    tool_name=fname,
+                )
                 emit("tool_call", {"name": fname, "args": fargs})
                 _log(f"⚙ tool {fname} {json.dumps(fargs, ensure_ascii=False)[:60]}")
 
                 if fname == "spawn_subagents":
-                    result = run_spawn_subagents(task, fargs, emit=lambda k, d: emit(k, d))
+                    result = run_spawn_subagents(
+                        task, fargs, emit=lambda k, d: emit(k, d)
+                    )
                 elif fname in tooling.CODING_TOOL_NAMES:
-                    if fname == "run_terminal_command" and _is_py_cmd(fargs.get("command", "")):
+                    if fname == "run_terminal_command" and _is_py_cmd(
+                        fargs.get("command", "")
+                    ):
                         _venv_ensure(task)
                     result = tooling.execute_tool(fname, fargs, ctx)
                 else:
@@ -760,14 +863,29 @@ def run_agent_turn(task_id, user_msg, on_event=None):
                 result_str = json.dumps(result, ensure_ascii=False)
                 _ec = result.get("exit_code") if isinstance(result, dict) else None
                 _err = result.get("error") if isinstance(result, dict) else None
-                _log(f"↩ {fname} -> " + (f"err: {_err}" if _err else (f"exit {_ec}" if _ec is not None else "ok")))
-                add_turn(task_id, "assistant", "tool_result", result_str, tool_name=fname)
+                _log(
+                    f"↩ {fname} -> "
+                    + (
+                        f"err: {_err}"
+                        if _err
+                        else (f"exit {_ec}" if _ec is not None else "ok")
+                    )
+                )
+                add_turn(
+                    task_id, "assistant", "tool_result", result_str, tool_name=fname
+                )
                 emit("tool_result", {"name": fname, "result": result})
                 new_turns_log.append(
                     f"[工具 {fname}] 参数={json.dumps(fargs, ensure_ascii=False)[:200]} 结果={result_str[:400]}"
                 )
 
-                api_messages.append({"role": "tool", "tool_call_id": tc.get("id"), "content": result_str})
+                api_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.get("id"),
+                        "content": result_str,
+                    }
+                )
 
                 if _check_cancel(task_id):
                     interrupted = True
@@ -790,10 +908,15 @@ def run_agent_turn(task_id, user_msg, on_event=None):
         card = update_checkpoint(task, "\n".join(new_turns_log))
         emit("checkpoint", card)
 
-        done = (not interrupted) and ("[TASK_DONE]" in final_text or card.get("status") == "已完成")
+        done = (not interrupted) and (
+            "[TASK_DONE]" in final_text or card.get("status") == "已完成"
+        )
         status = "已挂起" if interrupted else ("已完成" if done else "等待输入")
-        update_task(task_id, status=status,
-                    progress=100 if done else int(card.get("progress", 10) or 10))
+        update_task(
+            task_id,
+            status=status,
+            progress=100 if done else int(card.get("progress", 10) or 10),
+        )
         return {"final_text": final_text, "checkpoint": card, "done": done}
 
     except Exception as e:
@@ -855,9 +978,13 @@ def _cli():
 
     def printer(kind, data):
         if kind == "tool_call":
-            print(f"  [TOOL] {data['name']}({json.dumps(data['args'], ensure_ascii=False)[:80]})")
+            print(
+                f"  [TOOL] {data['name']}({json.dumps(data['args'], ensure_ascii=False)[:80]})"
+            )
         elif kind == "subagents_start":
-            print(f"  [FANOUT] 并发 {data['count']} 个子 agent (上限 {data['max_concurrency']})")
+            print(
+                f"  [FANOUT] 并发 {data['count']} 个子 agent (上限 {data['max_concurrency']})"
+            )
         elif kind == "subagent_done":
             print(f"  [DONE] 子任务[{data.get('id')}]: {str(data.get('result'))[:60]}")
         elif kind == "tool_result":
@@ -882,7 +1009,9 @@ def _cli():
         print(json.dumps(cp["card"] if cp else {}, ensure_ascii=False, indent=2))
         print("\n=== 事件流 ===")
         for t in get_turns(args.task_id):
-            print(f"[{t['type']}] {t.get('tool_name') or t['role']}: {t['content'][:120]}")
+            print(
+                f"[{t['type']}] {t.get('tool_name') or t['role']}: {t['content'][:120]}"
+            )
     else:
         ap.print_help()
 
