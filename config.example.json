@@ -37,7 +37,8 @@
     "top_k": 10
   },
   "agent": {
-    "auto_venv": true
+    "auto_venv": true,
+    "enforce_workflow": true
   },
   "active_prompts": {
     "main": "default",

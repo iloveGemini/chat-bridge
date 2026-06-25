@@ -16,6 +16,8 @@ class CodeAgentHubView {
     return {
       list: document.getElementById("ca-task-list"),
       newBtn: document.getElementById("ca-new-task-btn"),
+      globalInstInput: document.getElementById("ca-global-inst-input"),
+      globalInstSave: document.getElementById("ca-global-inst-save"),
     };
   }
 
@@ -132,6 +134,10 @@ class CodeAgentHubView {
       const pick = await this.pickFolder();
       if (pick === null) return; // 取消
       const payload = { title, goal: title };
+      const globalInst = localStorage.getItem("ca_global_instruction");
+      if (globalInst) {
+        payload.goal += "\n\n【全局约束】\n" + globalInst;
+      }
       if (pick.mode === "in_place" && pick.dir) payload.work_dir = pick.dir;
       try {
         const res = await api.agentCreate(payload);
@@ -145,6 +151,13 @@ class CodeAgentHubView {
       }
     });
 
+    if (e.globalInstSave && e.globalInstInput) {
+      e.globalInstSave.addEventListener("click", () => {
+        const val = e.globalInstInput.value.trim();
+        localStorage.setItem("ca_global_instruction", val);
+        showToast("全局约束已保存");
+      });
+    }
     // === 左滑逻辑 ===
     let startX = 0,
       currentX = 0;
@@ -235,6 +248,13 @@ class CodeAgentHubView {
   open() {
     window.router.pushView("code-agent-hub-view");
     this.bindOnce();
+    const e = this.els();
+    if (e.globalInstInput) {
+      const savedInst = localStorage.getItem("ca_global_instruction");
+      if (savedInst !== null) {
+        e.globalInstInput.value = savedInst;
+      }
+    }
     this.refresh();
   }
 
