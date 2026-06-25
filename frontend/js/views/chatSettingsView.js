@@ -207,6 +207,7 @@ class ChatSettingsView {
       clearBtn.onclick = async () => {
         if (!confirm('确定清空当前房间的所有对话剧本吗？')) return;
         await api.clear(sid);
+        localStorage.removeItem('chat_draft_' + sid);
         showToast('记录已清空');
         router.popView();
         import('./chatView.js').then(c => { c.chatView.messages = []; c.chatView.render(); });

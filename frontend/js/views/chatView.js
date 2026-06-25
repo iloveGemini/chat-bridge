@@ -54,6 +54,9 @@ class ChatView {
     e.input.addEventListener("input", () => {
       e.input.style.height = "auto";
       e.input.style.height = Math.min(e.input.scrollHeight, 120) + "px";
+      if (this.sessionId) {
+        localStorage.setItem('chat_draft_' + this.sessionId, e.input.value);
+      }
     });
 
     e.input.addEventListener("keydown", (ev) => {
@@ -93,6 +96,12 @@ class ChatView {
       e.scroll.innerHTML =
         '<div style="text-align:center;padding:20px;color:var(--text-secondary);">加载剧本中...</div>';
 
+    e.input.value = localStorage.getItem('chat_draft_' + sessionId) || "";
+    e.input.style.height = "auto";
+    // 延迟一下等 DOM 渲染后再计算高度
+    setTimeout(() => {
+      e.input.style.height = Math.min(e.input.scrollHeight, 120) + "px";
+    }, 0);
     this.clearImage();
     this._initial = true;
     await this.syncOnce();
@@ -186,7 +195,7 @@ class ChatView {
       e.send.title = "停止生成";
     } else {
       e.send.className = "send-btn";
-      e.send.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path></svg>`;
+      e.send.innerHTML = `<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path></svg>`;
       e.send.title = "发送";
     }
   }
@@ -214,8 +223,8 @@ class ChatView {
       ts: new Date().toISOString(),
     });
 
-    e.input.value = "";
-    e.input.style.height = "auto";
+    // e.input.value = "";
+    // e.input.style.height = "auto";
     this.clearImage();
     this.pending = true;
     this.typingState = "正在思考...";
@@ -296,6 +305,8 @@ class ChatView {
       const isReasoning = m.type === "reasoning";
       const isToolCall = m.type === "tool_call";
       const isToolResult = m.type === "tool_result";
+
+      if (isToolCall || isToolResult) return;
 
       // 【双保险类名】同时注入旧版的 right/left 和新版的 msg-user/msg-ai，确保任何CSS都能命中
       const alignClass = isUser ? "right msg-user" : "left msg-ai";
@@ -379,11 +390,11 @@ class ChatView {
       // 【找回灵魂容器 msg-content】将气泡和按钮重新包裹进去
       html += `
         <div class="msg ${alignClass}" data-msg-index="${actualIdx}">
-          <div class="msg-content" style="${isReasoning || isToolCall || isToolResult ? "width: 100%;" : ""}">
+          <div class="msg-content" style="${isReasoning ? "width: 100%;" : ""}">
             ${bubblesHtml}
             ${actionsHtml ? `<div class="msg-actions">${actionsHtml}</div>` : ""}
           </div>
-          <div class="msg-time">${formatTime(m.ts)}</div>
+          ${isReasoning ? "" : `<div class="msg-time">${formatTime(m.ts)}</div>`}
         </div>
       `;
     });

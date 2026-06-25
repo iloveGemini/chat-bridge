@@ -253,7 +253,15 @@ class CodeAgentView {
   _fmtToolResult(parsed, raw) {
     if (!parsed) return (raw || "").slice(0, 300);
     if (parsed.error) return "[ERR] " + parsed.error;
-    if (parsed.results) return `[研究完成] ${parsed.count} 个问题已汇总（带行号引用）`;
+    if (parsed.results) {
+      const parts = parsed.results.map((r) => {
+        const q = r.instruction || r.id || "";
+        const a = (r.result || "").trim() || "(无结论)";
+        const t = r.elapsed != null ? ` (${r.elapsed}s)` : "";
+        return `▸ ${q}${t}\n${a}`;
+      });
+      return `[子Agent研究完成] ${parsed.count} 个问题：\n\n` + parts.join("\n\n");
+    }
     if (parsed.command !== undefined) {
       const out =
         (parsed.stdout || "") + (parsed.stderr ? "\n" + parsed.stderr : "");
@@ -277,8 +285,10 @@ class CodeAgentView {
 
   async poll() {
     if (!this.currentTaskId) return;
+    if (this._polling) return; // 防止两次轮询重叠 -> 同一条 turn 被 ingest 两次（重复显示）
     const view = document.getElementById("code-agent-view");
     if (!view || !view.classList.contains("show")) return;
+    this._polling = true;
     try {
       const res = await api.agentTurns(this.currentTaskId, this._lastTurnId);
       if (res && res.ok) {
@@ -298,6 +308,8 @@ class CodeAgentView {
       }
     } catch (e) {
       /* 静默重试 */
+    } finally {
+      this._polling = false;
     }
   }
 
@@ -510,7 +522,7 @@ class CodeAgentView {
       if (m.role === "sys") {
         html += `<div class="terminal-msg" style="color:#858585; font-size:11px;">${escHtml(m.text)}</div>`;
       } else if (m.role === "user") {
-        html += `<div class="terminal-msg user-msg"><span class="prompt-symbol">❯</span> ${escHtml(m.text)}</div>`;
+        html += `<div class="terminal-msg user-msg" style="white-space:pre-wrap;"><span class="prompt-symbol">❯</span> ${escHtml(m.text)}</div>`;
       } else if (m.role === "thinking") {
         html += `
           <details class="terminal-msg agent-thinking">
@@ -526,7 +538,7 @@ class CodeAgentView {
         html += `
           <div class="terminal-msg tool-call">
             <div class="tool-cmd"><span style="color:#dcdcaa;font-weight:bold;">[EXEC]</span> ${escHtml(m.cmd)}${spinner}</div>
-            <div class="tool-result ${isErr}">${escHtml(m.result)}</div>
+            <div class="tool-result ${isErr}" style="white-space:pre-wrap;">${escHtml(m.result)}</div>
           </div>
         `;
       } else if (m.role === "ai") {

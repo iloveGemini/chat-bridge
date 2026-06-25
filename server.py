@@ -17,11 +17,11 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import agent  # 独立的 Code Agent 模块（自驱工具循环 + 沙箱工作区 + 进度卡）
 import memory_store
 import notify
 import scheduler
 import tooling
-import agent  # 独立的 Code Agent 模块（自驱工具循环 + 沙箱工作区 + 进度卡）
 
 API_REQUEST_TIMESTAMPS = []  # 用一个列表来记录最近请求的时间戳
 
@@ -2026,48 +2026,6 @@ def call_llm_api(session_id):
             timeout=120,  # 防止排队时连接超时
             tag=f"聊天·{session_id}",
         )
-        global LAST_API_REQUEST_TIME
-
-        # === 终极版：基于“滑动窗口”的智能节流阀 ===
-        MAX_RPM = 5  # 一分钟最多 5 次
-        WINDOW_SIZE = 60.0  # 窗口时间为 60 秒
-
-        now = time.time()
-
-        # 1. 扔掉那些已经是 60 秒以前的“过期”记录
-        API_REQUEST_TIMESTAMPS = [
-            ts for ts in API_REQUEST_TIMESTAMPS if now - ts < WINDOW_SIZE
-        ]
-
-        # 2. 检查最近 60 秒内的请求数是不是已经满了？
-        if len(API_REQUEST_TIMESTAMPS) >= MAX_RPM:
-            # 如果满了，我们需要等多久？
-            # 答案是：等到列表中“最老”的那次请求刚好过期为止
-            oldest_ts = API_REQUEST_TIMESTAMPS[0]
-            wait_time = WINDOW_SIZE - (now - oldest_ts)
-
-            if wait_time > 0:
-                log_print(
-                    f"⏳ [滑动窗口保护] 60秒内已达 {MAX_RPM} 次请求，挂起等待 {wait_time:.1f} 秒..."
-                )
-                time.sleep(wait_time + 0.5)  # 多加 0.5 秒冗余，防止服务器时钟误差
-                now = time.time()  # 睡醒后更新当前时间
-
-        # 3. 把本次请求的时间戳塞进列表
-        API_REQUEST_TIMESTAMPS.append(now)
-
-        # 发起真实的网络请求
-        res = _http_post_json(
-            url,
-            pl,
-            {
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_cfg.get('api_key')}",
-            },
-            timeout=120,  # ⚠️ 注意这里：如果等了60秒，总耗时会变长，把超时时间设大一点
-            tag=f"聊天·{session_id}",
-        )
-        return res
 
     try:
         raw_reply = ""
@@ -2454,10 +2412,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", 0))
             body = _safe_decode(self.rfile.read(length))
             _rbody = json.loads(body) if "{" in body else {"text": body}
-            
+
             with session.lock:
                 if session.interrupted:
-                    log_print(f"🚫 [claude_mode 丢弃回复][{session_id}] 会话已被中断，丢弃此条回复。")
+                    log_print(
+                        f"🚫 [claude_mode 丢弃回复][{session_id}] 会话已被中断，丢弃此条回复。"
+                    )
                     # 不要在这里设 session.interrupted = False，因为可能还有后续工具调用返回
                     self._json({"ok": True})
                     return
@@ -3622,7 +3582,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if path == "/api/logs":
             after = int(query.get("after", ["0"])[0] or 0)
             logs = agent.get_debug(after)
-            self._json({"ok": True, "logs": logs, "seq": (logs[-1]["id"] if logs else after)})
+            self._json(
+                {"ok": True, "logs": logs, "seq": (logs[-1]["id"] if logs else after)}
+            )
             return
 
         if path == "/api/agent/last_prompt":
@@ -3635,14 +3597,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             raw = query.get("path", [""])[0]
             try:
                 import os
+
                 if not raw:
                     if os.name == "nt":
                         import string
+
                         roots = [
-                            f"{d}:\\" for d in string.ascii_uppercase
+                            f"{d}:\\"
+                            for d in string.ascii_uppercase
                             if os.path.exists(f"{d}:\\")
                         ]
-                        self._json({"ok": True, "path": "", "parent": None, "dirs": roots})
+                        self._json(
+                            {"ok": True, "path": "", "parent": None, "dirs": roots}
+                        )
                     else:
                         base = Path("/")
                         dirs = []
@@ -3652,7 +3619,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                                     dirs.append(str(x))
                             except (PermissionError, OSError):
                                 pass
-                        self._json({"ok": True, "path": "/", "parent": None, "dirs": dirs})
+                        self._json(
+                            {"ok": True, "path": "/", "parent": None, "dirs": dirs}
+                        )
                     return
                 pp = Path(raw)
                 if not pp.exists() or not pp.is_dir():
@@ -3666,7 +3635,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     except (PermissionError, OSError):
                         pass
                 parent = str(pp.parent) if str(pp.parent) != str(pp) else ""
-                self._json({"ok": True, "path": str(pp), "parent": parent, "dirs": dirs})
+                self._json(
+                    {"ok": True, "path": str(pp), "parent": parent, "dirs": dirs}
+                )
             except Exception as ex:
                 self._json({"ok": False, "error": str(ex)})
             return
@@ -3729,10 +3700,6 @@ if __name__ == "__main__":
     print(f" Sessions Dir -> {SESSIONS_DIR}")
     print(f" Prompts Dir  -> {PROMPTS_DIR}")
     print("=" * 50 + "\n")
-    current_tree = get_project_tree(ROOT)
-    print("\n" + "=" * 20 + " [发送给AI的目录树] " + "=" * 20)
-    print(current_tree)
-    print("=" * 60 + "\n")
 
     for d in SESSIONS_DIR.iterdir():
         if d.is_dir():

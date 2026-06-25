@@ -27,6 +27,7 @@ class EngineSettingsView {
 
     const a = this.cfg.api || {};
     const sum = this.cfg.summary_api || {};
+    const wk = this.cfg.worker_api || {};
     const e = this.cfg.embedding || {};
     const rr = this.cfg.rerank || {};
     const mem = this.cfg.memory || {};
@@ -54,6 +55,10 @@ class EngineSettingsView {
         <div class="ios-item">
           <span class="label">当前模型</span>
           <input type="text" class="ios-input" id="es-api-model" value="${escHtml(a.model || '')}" placeholder="输入或拉取选择">
+        </div>
+        <div class="ios-item">
+          <span class="label">RPM 限速 (每分钟请求数)</span>
+          <input type="number" class="ios-input" id="es-api-rpm" value="${a.rpm ?? 5}" placeholder="5">
         </div>
         <div class="ios-item sel-model-row" id="row-sel-api" style="display:none; background:var(--bg);">
           <span class="label">选择拉取的模型</span>
@@ -89,6 +94,33 @@ class EngineSettingsView {
         <div class="ios-item">
           <span class="label">自动总结间隔</span>
           <input type="number" class="ios-input" id="es-mem-every" value="${mem.summarize_every ?? 20}" placeholder="20">
+        </div>
+      </div>
+
+      <div class="ios-sec-title">子 Agent (Worker) 模型</div>
+      <div class="ios-group" style="margin-top:0;">
+        <div class="ios-item">
+          <span class="label">Base URL</span>
+          <input type="text" class="ios-input" id="es-wk-url" value="${escHtml(wk.base_url || '')}" placeholder="留空则复用总结(flash)模型">
+        </div>
+        <div class="ios-item">
+          <span class="label">API Key</span>
+          <input type="password" class="ios-input" id="es-wk-key" value="${escHtml(wk.api_key || '')}" placeholder="sk-...">
+        </div>
+        <div class="ios-item btn-test-models" data-target="wk" style="justify-content:center; color:var(--active-color); font-weight:500;">
+          连通测试并拉取模型 〉
+        </div>
+        <div class="ios-item">
+          <span class="label">当前模型</span>
+          <input type="text" class="ios-input" id="es-wk-model" value="${escHtml(wk.model || '')}" placeholder="输入或拉取选择">
+        </div>
+        <div class="ios-item sel-model-row" id="row-sel-wk" style="display:none; background:var(--bg);">
+          <span class="label">选择拉取的模型</span>
+          <select class="ios-select" id="sel-wk" style="width:50%;"></select>
+        </div>
+        <div class="ios-item">
+          <span class="label">RPM 限速 (子Agent 并发额度)</span>
+          <input type="number" class="ios-input" id="es-wk-rpm" value="${wk.rpm ?? 20}" placeholder="20">
         </div>
       </div>
 
@@ -259,8 +291,9 @@ class EngineSettingsView {
     // 3. 核心保存逻辑（提取为公共函数，支持静默保存）
     const doSave = async (popView = true) => {
       const payload = {
-        api: { base_url: val('es-api-url'), api_key: val('es-api-key'), model: val('es-api-model') },
+        api: { base_url: val('es-api-url'), api_key: val('es-api-key'), model: val('es-api-model'), rpm: num('es-api-rpm', 5) },
         summary_api: { base_url: val('es-sum-url'), api_key: val('es-sum-key'), model: val('es-sum-model') },
+        worker_api: { base_url: val('es-wk-url'), api_key: val('es-wk-key'), model: val('es-wk-model'), rpm: num('es-wk-rpm', 20) },
         embedding: { enabled: chk('es-emb-en'), base_url: val('es-emb-url'), api_key: val('es-emb-key'), model: val('es-emb-model') },
         rerank: { enabled: chk('es-rr-en'), model: val('es-rr-model') },
         memory: {
