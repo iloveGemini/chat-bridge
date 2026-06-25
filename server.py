@@ -70,6 +70,7 @@ from chat.outreach import (
 )
 from session.tools import get_session_tools, set_session_tools
 from chat.llm import call_llm_api
+import routes
 from prompts.prompts import (
     _read_prompt_content, _resolve_preset, _get_display_name, _apply_macros,
     build_header_prompt, build_tail_anchor,
@@ -387,6 +388,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         session = (
             None if path in self.NO_SESSION_POST_PATHS else get_session(session_id)
         )
+
+        if routes.dispatch_post(self, path, query, session, session_id):
+            return
 
         if path == "/api/submit":
             length = int(self.headers.get("Content-Length", 0))
@@ -1133,79 +1137,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._json({"ok": True, "tools": cfg})
 
         # ================= Code Agent（薄路由，业务全在 agent.py） =================
-        elif path == "/api/agent/create":
-            data = self._read_json()
-            task = agent.create_task(
-                data.get("title") or "新任务",
-                data.get("goal") or "",
-                seed_dir=data.get("seed_dir") or None,
-                work_dir=data.get("work_dir") or None,
-            )
-            self._json({"ok": True, "task": task})
-
-        elif path == "/api/agent/send":
-            data = self._read_json()
-            task_id = data.get("task_id")
-            text = (data.get("text") or "").strip()
-            if not task_id or not text:
-                self._json({"ok": False, "error": "task_id/text 必填"})
-                return
-            if agent.is_running(task_id):
-                self._json({"ok": False, "error": "该任务正在运行中"})
-                return
-            # 网关路由：默认走新的 5 阶段 Orchestrator；config.coding.orchestrator=false 可回退旧大循环。
-            with config_lock:
-                _use_orch = (config.get("coding", {}) or {}).get("orchestrator", True)
-            if _use_orch and _run_coding_orchestrator is not None:
-                _runner, _mode = _run_coding_orchestrator, "orchestrator"
-            else:
-                _runner, _mode = agent.run_agent_turn, "legacy"
-            print(f"[agent/send] task={task_id} 路由 -> {_mode}")
-            # 后台线程跑，HTTP 立即返回；前端轮询 /api/agent/turns 取进度
-            threading.Thread(
-                target=_runner, args=(task_id, text), daemon=True
-            ).start()
-            self._json({"ok": True, "mode": _mode})
-
-        elif path == "/api/agent/delete":
-            data = self._read_json()
-            agent.delete_task(data.get("task_id"))
-            self._json({"ok": True})
-
-        elif path == "/api/agent/update":
-            data = self._read_json()
-            tid = data.pop("task_id", None)
-            if tid:
-                agent.update_task(tid, **data)
-            self._json({"ok": True, "task": agent.get_task(tid) if tid else None})
-
-        elif path == "/api/agent/interrupt":
-            data = self._read_json()
-            tid = data.get("task_id")
-            if tid:
-                agent.request_cancel(tid)
-            self._json({"ok": True})
-
-        elif path == "/api/agent/enqueue":
-            data = self._read_json()
-            tid = data.get("task_id")
-            text = (data.get("text") or "").strip()
-            if tid and text:
-                agent.enqueue_message(tid, text)
-                self._json({"ok": True})
-            else:
-                self._json({"ok": False, "error": "task_id/text 必填"})
-
-        elif path == "/api/agent/context/add":
-            data = self._read_json()
-            self._json(agent.add_context(
-                data.get("task_id"), data.get("filepath"), data.get("mode") or "outline"
-            ))
-
-        elif path == "/api/agent/context/remove":
-            data = self._read_json()
-            self._json(agent.remove_context(data.get("task_id"), data.get("filepath")))
-
+        # /api/agent/* 已迁至 routes.agent_routes（分发表处理）
         else:
             self._json({"ok": False, "error": "not found"}, 404)
 
@@ -1219,6 +1151,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
         session_id = query.get("session_id", ["default"])[0]
         session = None if path in self.NO_SESSION_GET_PATHS else get_session(session_id)
+
+        if routes.dispatch_get(self, path, query, session, session_id):
+            return
 
         if path == "/api/messages":
             with session.lock:
@@ -1620,112 +1555,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
 
         # ================= Code Agent（薄路由） =================
-        if path == "/api/agent/tasks":
-            self._json({"ok": True, "tasks": agent.list_tasks()})
-            return
-
-        if path == "/api/agent/task":
-            tid = query.get("id", [""])[0]
-            task = agent.get_task(tid)
-            if not task:
-                self._json({"ok": False, "error": "not found"}, 404)
-                return
-            cp = agent.get_checkpoint(tid)
-            self._json(
-                {
-                    "ok": True,
-                    "task": task,
-                    "checkpoint": cp["card"] if cp else None,
-                    "running": agent.is_running(tid),
-                    "tree": agent.workspace_tree(tid),
-                }
-            )
-            return
-
-        if path == "/api/agent/turns":
-            tid = query.get("id", [""])[0]
-            after = int(query.get("after", ["0"])[0] or 0)
-            self._json(
-                {
-                    "ok": True,
-                    "turns": agent.get_turns(tid, after),
-                    "running": agent.is_running(tid),
-                }
-            )
-            return
-
-        if path == "/api/logs":
-            after = int(query.get("after", ["0"])[0] or 0)
-            logs = agent.get_debug(after)
-            self._json(
-                {"ok": True, "logs": logs, "seq": (logs[-1]["id"] if logs else after)}
-            )
-            return
-
-        if path == "/api/agent/last_prompt":
-            tid = query.get("id", [""])[0]
-            self._json({"ok": True, "last_prompt": agent.get_last_prompt(tid)})
-            return
-
-        if path == "/api/agent/context":
-            tid = query.get("id", [""])[0]
-            self._json({"ok": True, "context": agent.list_context(tid)})
-            return
-
-        if path == "/api/agent/files":
-            tid = query.get("id", [""])[0]
-            self._json({"ok": True, "files": agent.list_workspace_files(tid)})
-            return
-
-        if path == "/api/fs/list":
-            # 服务端目录浏览（给前端文件夹选择器用）。只返回目录，不返回文件内容。
-            raw = query.get("path", [""])[0]
-            try:
-                import os
-
-                if not raw:
-                    if os.name == "nt":
-                        import string
-
-                        roots = [
-                            f"{d}:\\"
-                            for d in string.ascii_uppercase
-                            if os.path.exists(f"{d}:\\")
-                        ]
-                        self._json(
-                            {"ok": True, "path": "", "parent": None, "dirs": roots}
-                        )
-                    else:
-                        base = Path("/")
-                        dirs = []
-                        for x in sorted(base.iterdir(), key=lambda z: z.name.lower()):
-                            try:
-                                if x.is_dir() and not x.name.startswith("."):
-                                    dirs.append(str(x))
-                            except (PermissionError, OSError):
-                                pass
-                        self._json(
-                            {"ok": True, "path": "/", "parent": None, "dirs": dirs}
-                        )
-                    return
-                pp = Path(raw)
-                if not pp.exists() or not pp.is_dir():
-                    self._json({"ok": False, "error": "目录不存在"})
-                    return
-                dirs = []
-                for x in sorted(pp.iterdir(), key=lambda z: z.name.lower()):
-                    try:
-                        if x.is_dir() and not x.name.startswith("."):
-                            dirs.append(str(x))
-                    except (PermissionError, OSError):
-                        pass
-                parent = str(pp.parent) if str(pp.parent) != str(pp) else ""
-                self._json(
-                    {"ok": True, "path": str(pp), "parent": parent, "dirs": dirs}
-                )
-            except Exception as ex:
-                self._json({"ok": False, "error": str(ex)})
-            return
+        # /api/agent/*、/api/logs、/api/fs/list 已迁至 routes.agent_routes（分发表处理）
 
         super().do_GET()
 

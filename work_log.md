@@ -134,3 +134,14 @@
 - 验证：全部 py_compile 通过；import server 成功，call_llm_api/get_session_tools/set_session_tools 身份均指向新模块；
       会话工具授权读写闭环正确、_safe_resolve_path 越界拦截、限流表就位。
 - server.py 累计：3754 -> 1700 行级别，已基本只剩 HTTP 层（Handler + 路由 + bootstrap）。
+
+## 模块化拆分 (server 瘦身, 第 8 刀: 路由层 routes/ 基础设施 + agent 域)
+- [x] 新建 routes/registry.py：@post/@get 装饰器注册表 + dispatch_post/dispatch_get。
+      路由函数统一签名 fn(h, query, session, session_id)，h 即 Handler（提供 _read_json/_json 等）。
+- [x] 新建 routes/agent_routes.py：迁入全部 /api/agent/*（create/send/delete/update/interrupt/
+      enqueue/context add·remove + tasks/task/turns/last_prompt/context/files）以及 /api/logs、/api/fs/list。
+- [x] Handler.do_POST / do_GET 在旧 if/elif 链之前先调 dispatch_*，命中即返回，未命中回落旧链
+      —— 增量迁移，互不影响。已迁路由从旧链删除。
+- 验证：全部 py_compile 通过；import server 成功；假 Handler 实测：/api/agent/tasks、/api/agent/create
+      分发命中且响应正确，未注册路径（/api/messages、/api/submit）正确回落（返回 False）。
+- server.py 累计：3754 -> 1640 行级别；已注册 16 条路由进 routes/，旧链尚余 ~63 条待后续按域迁移。

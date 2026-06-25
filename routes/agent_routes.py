@@ -1,0 +1,194 @@
+# -*- coding: utf-8 -*-
+"""Code Agent 路由：任务 CRUD / 发送 / 中断 / 上下文 / 轮询 + 本地目录浏览。"""
+import threading
+from pathlib import Path
+
+import agent
+from core.config import config, config_lock
+from routes.registry import post, get
+
+try:
+    from agents.coding.orchestrator import run_coding_task as _run_coding_orchestrator
+except Exception:
+    _run_coding_orchestrator = None
+
+
+# ---------------- POST ----------------
+@post("/api/agent/create")
+def _create(h, query, session, session_id):
+    data = h._read_json()
+    task = agent.create_task(
+        data.get("title") or "新任务",
+        data.get("goal") or "",
+        seed_dir=data.get("seed_dir") or None,
+        work_dir=data.get("work_dir") or None,
+    )
+    h._json({"ok": True, "task": task})
+
+
+@post("/api/agent/send")
+def _send(h, query, session, session_id):
+    data = h._read_json()
+    task_id = data.get("task_id")
+    text = (data.get("text") or "").strip()
+    if not task_id or not text:
+        h._json({"ok": False, "error": "task_id/text 必填"})
+        return
+    if agent.is_running(task_id):
+        h._json({"ok": False, "error": "该任务正在运行中"})
+        return
+    # 网关路由：默认走新的 5 阶段 Orchestrator；config.coding.orchestrator=false 可回退旧大循环。
+    with config_lock:
+        _use_orch = (config.get("coding", {}) or {}).get("orchestrator", True)
+    if _use_orch and _run_coding_orchestrator is not None:
+        _runner, _mode = _run_coding_orchestrator, "orchestrator"
+    else:
+        _runner, _mode = agent.run_agent_turn, "legacy"
+    print(f"[agent/send] task={task_id} 路由 -> {_mode}")
+    threading.Thread(target=_runner, args=(task_id, text), daemon=True).start()
+    h._json({"ok": True, "mode": _mode})
+
+
+@post("/api/agent/delete")
+def _delete(h, query, session, session_id):
+    data = h._read_json()
+    agent.delete_task(data.get("task_id"))
+    h._json({"ok": True})
+
+
+@post("/api/agent/update")
+def _update(h, query, session, session_id):
+    data = h._read_json()
+    tid = data.pop("task_id", None)
+    if tid:
+        agent.update_task(tid, **data)
+    h._json({"ok": True, "task": agent.get_task(tid) if tid else None})
+
+
+@post("/api/agent/interrupt")
+def _interrupt(h, query, session, session_id):
+    data = h._read_json()
+    tid = data.get("task_id")
+    if tid:
+        agent.request_cancel(tid)
+    h._json({"ok": True})
+
+
+@post("/api/agent/enqueue")
+def _enqueue(h, query, session, session_id):
+    data = h._read_json()
+    tid = data.get("task_id")
+    text = (data.get("text") or "").strip()
+    if tid and text:
+        agent.enqueue_message(tid, text)
+        h._json({"ok": True})
+    else:
+        h._json({"ok": False, "error": "task_id/text 必填"})
+
+
+@post("/api/agent/context/add")
+def _ctx_add(h, query, session, session_id):
+    data = h._read_json()
+    h._json(agent.add_context(
+        data.get("task_id"), data.get("filepath"), data.get("mode") or "outline"
+    ))
+
+
+@post("/api/agent/context/remove")
+def _ctx_remove(h, query, session, session_id):
+    data = h._read_json()
+    h._json(agent.remove_context(data.get("task_id"), data.get("filepath")))
+
+
+# ---------------- GET ----------------
+@get("/api/agent/tasks")
+def _tasks(h, query, session, session_id):
+    h._json({"ok": True, "tasks": agent.list_tasks()})
+
+
+@get("/api/agent/task")
+def _task(h, query, session, session_id):
+    tid = query.get("id", [""])[0]
+    task = agent.get_task(tid)
+    if not task:
+        h._json({"ok": False, "error": "not found"}, 404)
+        return
+    cp = agent.get_checkpoint(tid)
+    h._json({
+        "ok": True,
+        "task": task,
+        "checkpoint": cp["card"] if cp else None,
+        "running": agent.is_running(tid),
+        "tree": agent.workspace_tree(tid),
+    })
+
+
+@get("/api/agent/turns")
+def _turns(h, query, session, session_id):
+    tid = query.get("id", [""])[0]
+    after = int(query.get("after", ["0"])[0] or 0)
+    h._json({"ok": True, "turns": agent.get_turns(tid, after), "running": agent.is_running(tid)})
+
+
+@get("/api/logs")
+def _logs(h, query, session, session_id):
+    after = int(query.get("after", ["0"])[0] or 0)
+    logs = agent.get_debug(after)
+    h._json({"ok": True, "logs": logs, "seq": (logs[-1]["id"] if logs else after)})
+
+
+@get("/api/agent/last_prompt")
+def _last_prompt(h, query, session, session_id):
+    tid = query.get("id", [""])[0]
+    h._json({"ok": True, "last_prompt": agent.get_last_prompt(tid)})
+
+
+@get("/api/agent/context")
+def _ctx(h, query, session, session_id):
+    tid = query.get("id", [""])[0]
+    h._json({"ok": True, "context": agent.list_context(tid)})
+
+
+@get("/api/agent/files")
+def _files(h, query, session, session_id):
+    tid = query.get("id", [""])[0]
+    h._json({"ok": True, "files": agent.list_workspace_files(tid)})
+
+
+@get("/api/fs/list")
+def _fs_list(h, query, session, session_id):
+    """服务端目录浏览（给前端文件夹选择器用）。只返回目录，不返回文件内容。"""
+    raw = query.get("path", [""])[0]
+    try:
+        import os
+        if not raw:
+            if os.name == "nt":
+                import string
+                roots = [f"{d}:\\" for d in string.ascii_uppercase if os.path.exists(f"{d}:\\")]
+                h._json({"ok": True, "path": "", "parent": None, "dirs": roots})
+            else:
+                base = Path("/")
+                dirs = []
+                for x in sorted(base.iterdir(), key=lambda z: z.name.lower()):
+                    try:
+                        if x.is_dir() and not x.name.startswith("."):
+                            dirs.append(str(x))
+                    except (PermissionError, OSError):
+                        pass
+                h._json({"ok": True, "path": "/", "parent": None, "dirs": dirs})
+            return
+        pp = Path(raw)
+        if not pp.exists() or not pp.is_dir():
+            h._json({"ok": False, "error": "目录不存在"})
+            return
+        dirs = []
+        for x in sorted(pp.iterdir(), key=lambda z: z.name.lower()):
+            try:
+                if x.is_dir() and not x.name.startswith("."):
+                    dirs.append(str(x))
+            except (PermissionError, OSError):
+                pass
+        parent = str(pp.parent) if str(pp.parent) != str(pp) else ""
+        h._json({"ok": True, "path": str(pp), "parent": parent, "dirs": dirs})
+    except Exception as ex:
+        h._json({"ok": False, "error": str(ex)})
