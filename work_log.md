@@ -102,3 +102,13 @@
       端到端实跑（DB 指向 /tmp 绕开挂载盘 sqlite 限制）：build_injected_memory 正常返回、run_summary 完整跑通
       到 API 调用（仅因沙箱无外网 403 失败，逻辑/重试/错误处理均正确）。
 - server.py 累计：3754 -> 2900 行级别。已抽出 core / session / chat.scene / prompts / memory 五块。
+
+## 模块化拆分 (server 瘦身, 第 5 刀: chat envelope + tts)
+- [x] 新建 chat/envelope.py：parse_msg_envelope（<msg> 信封解析：场景元数据/正文/情绪/停顿标记）、
+      ingest_reply（推进场景闩锁）。依赖 re + core.net.log_print。
+- [x] 新建 chat/tts.py：_tts_cfg/_strip_narration/synth_tts/_attach_tts/_character_voice（MiniMax T2A 旁路）。
+      依赖 core.config/paths/net。
+- 验证：全部 py_compile 通过；import server 成功，4 个函数身份均指向 chat.* 新模块；
+      实跑信封解析（scene_3/emotion=happy/voice_text 保留 <#0.4#>）、ingest 场景闩锁推进、
+      旁白剥离、TTS 未开启返回 None —— 全部正确。
+- server.py 累计：3754 -> 2480 行级别。已抽出 core/session/chat(scene+envelope+tts)/prompts/memory。
