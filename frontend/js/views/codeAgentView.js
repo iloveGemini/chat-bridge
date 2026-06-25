@@ -166,7 +166,10 @@ class CodeAgentView {
       }
       await this.refreshTaskState();
     } catch (err) {
-      this.messages.push({ role: "sys", text: "[SYSTEM] 加载历史失败: " + err.message });
+      this.messages.push({
+        role: "sys",
+        text: "[SYSTEM] 加载历史失败: " + err.message,
+      });
     }
     this.renderAll();
     this.scrollToBottom();
@@ -181,15 +184,29 @@ class CodeAgentView {
       this.messages.push({ role: "thinking", text: t.content, time: "" });
     } else if (t.type === "tool_call") {
       let args = {};
-      try { args = JSON.parse(t.content).args || {}; } catch (e) {}
+      try {
+        args = JSON.parse(t.content).args || {};
+      } catch (e) {}
       const cmd = this._fmtToolCall(t.tool_name, args);
-      this.messages.push({ role: "tool", cmd, result: "执行中...", tool: t.tool_name, pending: true });
-      const fp = args.filepath || (args.files && args.files[0] && args.files[0].filepath);
+      this.messages.push({
+        role: "tool",
+        cmd,
+        result: "执行中...",
+        tool: t.tool_name,
+        pending: true,
+      });
+      const fp =
+        args.filepath ||
+        (args.files && args.files[0] && args.files[0].filepath);
       if (fp) this.addFileToWorkspace(fp, "reading");
     } else if (t.type === "tool_result") {
-      const m = [...this.messages].reverse().find((x) => x.role === "tool" && x.pending && x.tool === t.tool_name);
+      const m = [...this.messages]
+        .reverse()
+        .find((x) => x.role === "tool" && x.pending && x.tool === t.tool_name);
       let parsed = null;
-      try { parsed = JSON.parse(t.content); } catch (e) {}
+      try {
+        parsed = JSON.parse(t.content);
+      } catch (e) {}
       const isErr = parsed && (parsed.error || parsed.exit_code > 0);
       const summary = this._fmtToolResult(parsed, t.content);
       if (m) {
@@ -197,9 +214,16 @@ class CodeAgentView {
         m.isError = !!isErr;
         m.pending = false;
       } else {
-        this.messages.push({ role: "tool", cmd: t.tool_name, result: summary, isError: !!isErr });
+        this.messages.push({
+          role: "tool",
+          cmd: t.tool_name,
+          result: summary,
+          isError: !!isErr,
+        });
       }
-      this.workspaceFiles.forEach((f) => { if (f.status === "reading") f.status = "loaded"; });
+      this.workspaceFiles.forEach((f) => {
+        if (f.status === "reading") f.status = "loaded";
+      });
     } else if (t.role === "assistant" && t.type === "text") {
       this.messages.push({ role: "ai", text: t.content });
     } else if (t.role === "system" && t.type === "text") {
@@ -209,12 +233,15 @@ class CodeAgentView {
 
   _fmtToolCall(name, args) {
     if (name === "run_terminal_command") return `$ ${args.command || ""}`;
-    if (name === "read_file_with_lines") return `read_file('${args.filepath || ""}')`;
+    if (name === "read_file_with_lines")
+      return `read_file('${args.filepath || ""}')`;
     if (name === "apply_file_edits") return `edit('${args.filepath || ""}')`;
     if (name === "grep_files") return `grep('${args.pattern || ""}')`;
-    if (name === "spawn_subagents") {
-      const n = (args.subtasks || []).length;
-      return `spawn ${n} 个并发子agent (只读分析)`;
+    if (name === "get_outline") return `outline('${args.filepath || ""}')`;
+    if (name === "get_function_code") return `getFn('${args.name || ""}')`;
+    if (name === "explore_codebase") {
+      const n = (args.questions || []).length;
+      return `explore：并发研究 ${n} 个问题`;
     }
     if (name === "batch_write_files") {
       const fs = (args.files || []).map((f) => f.filepath).join(", ");
@@ -226,13 +253,15 @@ class CodeAgentView {
   _fmtToolResult(parsed, raw) {
     if (!parsed) return (raw || "").slice(0, 300);
     if (parsed.error) return "[ERR] " + parsed.error;
-    if (parsed.results) return `[并发完成] ${parsed.count} 个子任务已汇总`;
+    if (parsed.results) return `[研究完成] ${parsed.count} 个问题已汇总（带行号引用）`;
     if (parsed.command !== undefined) {
-      const out = (parsed.stdout || "") + (parsed.stderr ? "\n" + parsed.stderr : "");
+      const out =
+        (parsed.stdout || "") + (parsed.stderr ? "\n" + parsed.stderr : "");
       return `[exit ${parsed.exit_code}] ${out.trim().slice(0, 400) || "(no output)"}`;
     }
     if (parsed.msg) return "[OK] " + parsed.msg;
-    if (parsed.content) return "[OK] " + String(parsed.content).split("\n").length + " 行已读取";
+    if (parsed.content)
+      return "[OK] " + String(parsed.content).split("\n").length + " 行已读取";
     return "[OK] " + JSON.stringify(parsed).slice(0, 200);
   }
 
@@ -254,7 +283,10 @@ class CodeAgentView {
       const res = await api.agentTurns(this.currentTaskId, this._lastTurnId);
       if (res && res.ok) {
         let changed = false;
-        res.turns.forEach((t) => { this.ingestTurn(t); changed = true; });
+        res.turns.forEach((t) => {
+          this.ingestTurn(t);
+          changed = true;
+        });
         const wasGen = this.generating;
         this.generating = !!res.running;
         if (changed) {
@@ -298,7 +330,9 @@ class CodeAgentView {
   }
 
   removeFileFromWorkspace(filename) {
-    this.workspaceFiles = this.workspaceFiles.filter((f) => f.name !== filename);
+    this.workspaceFiles = this.workspaceFiles.filter(
+      (f) => f.name !== filename,
+    );
     this.renderFiles();
   }
 
@@ -308,9 +342,9 @@ class CodeAgentView {
     // 优先展示完整沙箱工作区目录树（后端每次 /api/agent/task 返回）
     if (this.workspaceTree) {
       e.filesPanel.innerHTML =
-        '<pre style="margin:0;color:#9cdcfe;font-size:11px;line-height:1.5;white-space:pre;overflow:auto;">' +
+        '<pre style="margin:0;color:#9cdcfe;font-size:11px;line-height:1.5;white-space:pre;max-height:26vh;overflow:auto;">' +
         escHtml(this.workspaceTree) +
-        '</pre>';
+        "</pre>";
       return;
     }
     if (this.workspaceFiles.length === 0) {
@@ -370,7 +404,8 @@ class CodeAgentView {
       e.send.setAttribute("title", "中断当前任务");
       if (e.queueBtn) e.queueBtn.style.display = "inline-block";
       const inp = e.input;
-      if (inp) inp.placeholder = "Agent 工作中：回车/绿色键=排队补充，红色键=中断";
+      if (inp)
+        inp.placeholder = "Agent 工作中：回车/绿色键=排队补充，红色键=中断";
     } else {
       e.send.innerHTML =
         '<line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>';
@@ -421,13 +456,22 @@ class CodeAgentView {
           "#ffae57",
         );
         (lp.messages || []).forEach((m, i) => {
-          const c = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+          const c =
+            typeof m.content === "string"
+              ? m.content
+              : JSON.stringify(m.content);
           window.vConsole.log(`[#${i} ${m.role}] ${c}`, "#9cdcfe");
           if (m.tool_calls) {
-            window.vConsole.log(`   tool_calls: ${JSON.stringify(m.tool_calls)}`, "#dcdcaa");
+            window.vConsole.log(
+              `   tool_calls: ${JSON.stringify(m.tool_calls)}`,
+              "#dcdcaa",
+            );
           }
         });
-        window.vConsole.log(`===== end (${(lp.messages || []).length} 条) =====`, "#ffae57");
+        window.vConsole.log(
+          `===== end (${(lp.messages || []).length} 条) =====`,
+          "#ffae57",
+        );
       }
       showToast("已在控制台输出最近 prompt");
     } catch (err) {
@@ -437,7 +481,12 @@ class CodeAgentView {
 
   // 真中断：通知后端在下一个检查点停止循环；轮询会拉回“已中断”系统消息与“已挂起”状态。
   async interruptGeneration() {
-    if (!window.confirm("确定要中断当前任务吗？\n（已完成的进度会保存为进度卡，可稍后继续）")) return;
+    if (
+      !window.confirm(
+        "确定要中断当前任务吗？\n（已完成的进度会保存为进度卡，可稍后继续）",
+      )
+    )
+      return;
     try {
       await api.agentInterrupt(this.currentTaskId);
       showToast("已请求中断，正在停止…");
@@ -465,13 +514,15 @@ class CodeAgentView {
       } else if (m.role === "thinking") {
         html += `
           <details class="terminal-msg agent-thinking">
-            <summary><span style="color:#c586c0;font-weight:bold;">[THINK]</span> process ${m.time ? "(" + m.time + ")" : ""}</summary>
+            <summary><span style="color:#c586c0;font-weight:bold;">[Thought process]</span>${m.time ? "(" + m.time + ")" : ""}</summary>
             <div class="think-content">${escHtml(m.text)}</div>
           </details>
         `;
       } else if (m.role === "tool") {
         const isErr = m.isError ? "error" : "";
-        const spinner = m.pending ? ` <span style="color:#dcdcaa;">${ICONS.loading}</span>` : "";
+        const spinner = m.pending
+          ? ` <span style="color:#dcdcaa;">${ICONS.loading}</span>`
+          : "";
         html += `
           <div class="terminal-msg tool-call">
             <div class="tool-cmd"><span style="color:#dcdcaa;font-weight:bold;">[EXEC]</span> ${escHtml(m.cmd)}${spinner}</div>

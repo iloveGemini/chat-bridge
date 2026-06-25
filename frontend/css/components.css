@@ -1477,6 +1477,11 @@
   background: #1e1e1e;
   border-bottom: 1px dashed #333;
   flex-shrink: 0;
+  max-height: 250px; /* 手机端控制在一个合理高度 */
+  overflow-y: auto;
+  font-size: 0.85em; /* 稍微缩小字号 */
+  background: #1e1e1e; /* 代码块背景 */
+  padding: 10px;
 }
 .code-workspace .panel-title {
   font-size: 11px;
@@ -1693,6 +1698,9 @@
 .btn-pin {
   background: #007acc;
 } /* 蓝: 置顶 */
+.btn-edit {
+  background: #67c23a;
+} /* 绿: 编辑 */
 .btn-archive {
   background: #e6a23c;
 } /* 黄: 归档 */

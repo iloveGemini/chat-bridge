@@ -211,7 +211,6 @@ class CodeAgentHubView {
           } else if (action === "archive") {
             await api.agentUpdate({ task_id: taskId, status: "已归档" });
           } else if (action === "pin") {
-            // 触发后端 updated_at 刷新即可冒泡到顶（列表按更新时间倒序）
             const cur = this.tasks.find((t) => t.id === taskId);
             await api.agentUpdate({
               task_id: taskId,
@@ -222,7 +221,7 @@ class CodeAgentHubView {
           alert("操作失败: " + err.message);
         }
         this.activeSwipeEl = null;
-        await this.refresh(); // 从后端重新拉取，状态真实
+        await this.refresh();
         return;
       }
 

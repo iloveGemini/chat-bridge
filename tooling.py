@@ -18,6 +18,8 @@ CODING_TOOL_NAMES = {
     "grep_files",
     "glob_files",
     "replace_in_file",
+    "get_outline",
+    "get_function_code",
 }
 
 PROMPT_CATEGORIES = ["main", "character", "user", "style", "post"]
@@ -27,6 +29,114 @@ PROTECTED_PROMPT_NAMES = {"default", "__assistant__"}
 def _safe_name(name):
     """只允许字母数字下划线短横线，防止路径穿越"""
     return "".join(c for c in (name or "") if c.isalnum() or c in "-_")
+
+
+def _py_outline(src):
+    """用 ast 解析 Python，返回类/函数/方法的结构（含行号、签名、首行 docstring）。"""
+    import ast
+
+    tree = ast.parse(src)
+    out = []
+
+    def doc1(node):
+        d = ast.get_docstring(node)
+        return (d or "").strip().split("\n")[0][:80]
+
+    def walk(body, cls=None):
+        for ch in body:
+            if isinstance(ch, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                nm = f"{cls}.{ch.name}" if cls else ch.name
+                a = ", ".join(x.arg for x in ch.args.args)
+                out.append({
+                    "type": "method" if cls else "function",
+                    "name": nm, "signature": f"{ch.name}({a})",
+                    "start_line": ch.lineno,
+                    "end_line": getattr(ch, "end_lineno", ch.lineno),
+                    "doc": doc1(ch),
+                })
+            elif isinstance(ch, ast.ClassDef):
+                out.append({
+                    "type": "class", "name": ch.name,
+                    "signature": f"class {ch.name}",
+                    "start_line": ch.lineno,
+                    "end_line": getattr(ch, "end_lineno", ch.lineno),
+                    "doc": doc1(ch),
+                })
+                walk(ch.body, ch.name)
+
+    walk(tree.body)
+    return out
+
+
+def _py_locate(src, want):
+    """在 Python 源里定位 want（可为 func 或 Class.method），返回 (start,end) 行号。"""
+    import ast
+
+    tree = ast.parse(src)
+    cls_part, _, fn_part = want.partition(".")
+
+    def search(body, cls=None):
+        for ch in body:
+            if isinstance(ch, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if fn_part:
+                    if cls == cls_part and ch.name == fn_part:
+                        return (ch.lineno, getattr(ch, "end_lineno", ch.lineno))
+                elif ch.name == want:
+                    return (ch.lineno, getattr(ch, "end_lineno", ch.lineno))
+            elif isinstance(ch, ast.ClassDef):
+                if not fn_part and ch.name == want:
+                    return (ch.lineno, getattr(ch, "end_lineno", ch.lineno))
+                r = search(ch.body, ch.name)
+                if r:
+                    return r
+        return None
+
+    return search(tree.body)
+
+
+_KW_SKIP = {"if", "for", "while", "switch", "catch", "return", "function", "class", "else"}
+
+
+def _regex_outline(src):
+    """非 Python 的启发式大纲（正则，best-effort，只给起始行）。"""
+    out = []
+    pats = [
+        (re.compile(r"^\s*(?:export\s+)?(?:default\s+)?class\s+(\w+)"), "class"),
+        (re.compile(r"^\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)"), "function"),
+        (re.compile(r"^\s*(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s*)?\("), "function"),
+        (re.compile(r"^\s*(\w+)\s*\([^)]*\)\s*\{"), "method"),
+    ]
+    for i, ln in enumerate(src.splitlines(), 1):
+        for pat, kind in pats:
+            m = pat.match(ln)
+            if m and m.group(1) not in _KW_SKIP:
+                out.append({
+                    "type": kind, "name": m.group(1),
+                    "signature": ln.strip()[:80],
+                    "start_line": i, "end_line": i, "doc": "",
+                })
+                break
+    return out
+
+
+def _regex_locate(lines, want):
+    """非 Python：找到声明行后用花括号配对求范围；无花括号则给个窗口。"""
+    name_pat = re.compile(r"\b" + re.escape(want) + r"\b")
+    for i, ln in enumerate(lines):
+        if name_pat.search(ln) and ("(" in ln or "class" in ln or "=>" in ln):
+            start = i + 1
+            head = "".join(lines[i : i + 3])
+            if "{" in head:
+                depth = 0
+                started = False
+                for j in range(i, len(lines)):
+                    depth += lines[j].count("{") - lines[j].count("}")
+                    if "{" in lines[j]:
+                        started = True
+                    if started and depth <= 0:
+                        return (start, j + 1)
+            return (start, min(len(lines), start + 60))
+    return None
 
 
 def get_coding_tools():
@@ -201,6 +311,35 @@ def get_coding_tools():
                         "replace_all": {"type": "boolean", "description": "是否替换全部出现，默认 false（仅替换唯一一处）"},
                     },
                     "required": ["filepath", "old_string", "new_string"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_outline",
+                "description": "返回文件的结构大纲（类/函数/方法 + 行号 + 签名 + 首行 docstring），像 VSCode 大纲。先看大纲定位，再用 get_function_code 取具体函数，避免整文件读取。Python 用 AST 精确解析；其它语言为正则启发式。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "filepath": {"type": "string", "description": "相对项目根的文件路径"}
+                    },
+                    "required": ["filepath"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "get_function_code",
+                "description": "取出某个函数/方法的完整源码（带行号），方便你精确改它。name 可为函数名，或用 Class.method 指定类里的方法。配合 get_outline 用：先看大纲拿到名字，再取代码。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "filepath": {"type": "string", "description": "相对项目根的文件路径"},
+                        "name": {"type": "string", "description": "函数/方法名；类方法用 Class.method"},
+                    },
+                    "required": ["filepath", "name"],
                 },
             },
         },
@@ -881,6 +1020,62 @@ def execute_tool(name, args, context):
             except subprocess.TimeoutExpired:
                 return {"error": f"命令执行超时 ({min(1800, max(1, int(args.get('timeout') or 180)))}秒)，可传更大的 timeout 重试"}
             except Exception as e:
+                return {"error": str(e)}
+
+        if name == "get_outline":
+            try:
+                target_file = safe_resolve(args.get("filepath"))
+                if not target_file.exists() or not target_file.is_file():
+                    return {"error": "文件不存在"}
+                src = target_file.read_text(encoding="utf-8")
+                if target_file.suffix == ".py":
+                    symbols = _py_outline(src)
+                    lang = "python"
+                else:
+                    symbols = _regex_outline(src)
+                    lang = (target_file.suffix.lstrip(".") or "?") + "(启发式)"
+                return {
+                    "filepath": args.get("filepath"),
+                    "language": lang,
+                    "count": len(symbols),
+                    "symbols": symbols,
+                }
+            except SyntaxError as e:
+                return {"error": f"解析失败(语法错误): {e}"}
+            except ValueError as e:
+                return {"error": str(e)}
+
+        if name == "get_function_code":
+            try:
+                target_file = safe_resolve(args.get("filepath"))
+                if not target_file.exists() or not target_file.is_file():
+                    return {"error": "文件不存在"}
+                want = (args.get("name") or "").strip()
+                if not want:
+                    return {"error": "name 必填（函数/方法名，类方法用 Class.method）"}
+                src = target_file.read_text(encoding="utf-8")
+                lines = src.splitlines()
+                if target_file.suffix == ".py":
+                    rng = _py_locate(src, want)
+                else:
+                    rng = _regex_locate(lines, want)
+                if not rng:
+                    return {"error": f"未找到 {want}（可先 get_outline 看可用名字）"}
+                st, en = rng
+                seg = lines[st - 1 : en]
+                numbered = "\n".join(
+                    f"{str(st + i).rjust(4)} | {ln}" for i, ln in enumerate(seg)
+                )
+                return {
+                    "filepath": args.get("filepath"),
+                    "name": want,
+                    "start_line": st,
+                    "end_line": en,
+                    "code": numbered,
+                }
+            except SyntaxError as e:
+                return {"error": f"解析失败: {e}"}
+            except ValueError as e:
                 return {"error": str(e)}
 
         return {"error": f"未知工具: {name}"}

@@ -120,6 +120,7 @@ class ApiService {
   agentTask(id) { return this.get('/api/agent/task?id=' + encodeURIComponent(id)); }
   agentTurns(id, after) { return this.get('/api/agent/turns?id=' + encodeURIComponent(id) + '&after=' + (after || 0)); }
   agentCreate(payload) { return this.post('/api/agent/create', payload); }
+  agentUpdate(payload) { return this.post('/api/agent/update', payload); }
   agentSend(task_id, text) { return this.post('/api/agent/send', { task_id, text }); }
   agentDelete(task_id) { return this.post('/api/agent/delete', { task_id }); }
   agentInterrupt(task_id) { return this.post('/api/agent/interrupt', { task_id }); }
