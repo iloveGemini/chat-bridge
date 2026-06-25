@@ -18,6 +18,12 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import agent  # 独立的 Code Agent 模块（自驱工具循环 + 沙箱工作区 + 进度卡）
+try:
+    # 新的 5 阶段 Coding Orchestrator（agent.py 退化为其底层能力库）
+    from agents.coding.orchestrator import run_coding_task as _run_coding_orchestrator
+except Exception as _e:  # 导入失败不影响旧路径，网关会自动回退
+    _run_coding_orchestrator = None
+    print(f"[warn] Coding Orchestrator 未加载，回退到 agent.run_agent_turn: {_e}")
 import memory_store
 import notify
 import scheduler
@@ -37,17 +43,19 @@ if sys.platform == "win32":
         sys.stderr.buffer, encoding="utf-8", errors="replace", line_buffering=True
     )
 
-PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8800
-ROOT = Path(__file__).parent
-DATA_DIR = ROOT / "data"
-SESSIONS_DIR = DATA_DIR / "sessions"
-PROMPTS_DIR = DATA_DIR / "prompts"
-PRESETS_DIR = DATA_DIR / "prompts" / "_preset"
-ARCHIVE_DIR = DATA_DIR / "archive"
-UPLOAD_DIR = DATA_DIR / "uploads"
-CONFIG_FILE = ROOT / "config.json"
-MEMORY_DB = DATA_DIR / "memory.db"
-JOBS_DB = DATA_DIR / "jobs.db"
+# 路径常量 / 配置单例 / 网络工具 已抽离到 core/ 包，这里导入回本模块命名空间，
+# 既让本文件内的裸名引用（PORT/config/log_print…）继续可用，也保持 server.xxx 的向后兼容。
+from core.paths import (
+    PORT, ROOT, DATA_DIR, SESSIONS_DIR, PROMPTS_DIR, PRESETS_DIR,
+    ARCHIVE_DIR, UPLOAD_DIR, CONFIG_FILE, MEMORY_DB, JOBS_DB, TTS_DIR,
+)
+from core.net import log_print, _http_post_json, _safe_decode
+from core.config import (
+    config, config_lock,
+    load_config as _load_config, save_config as _save_config,
+    _auth_cfg, _auth_enabled, _auth_token_for, _expected_token,
+)
+
 LAN_BASE = ""  # 运行时填入 http://<本机IP>:PORT，用于把相对图标路径补成绝对 URL（Bark 等推送图标用）
 
 # "预设" 只打包这三个分类
@@ -62,9 +70,7 @@ SESSION_BINDING_KEYS = ["preset", "user", "character"]
 # 场景闩锁创世初始值（新会话/无历史时的时空起点，由聊天 AI 在第 1 轮负责开辟时空）
 GENESIS_SCENE = {"scene_id": "scene_0", "time": "未初始化", "place": "未初始化"}
 
-# 全局配置和锁
-config = {}
-config_lock = threading.Lock()
+# 全局配置 config / config_lock 已由 core.config 提供（见文件顶部导入）
 sessions_map = {}  # 内存中驻留的会话对象 { session_id: SessionObject }
 global_pending_event = (
     threading.Event()
@@ -141,9 +147,7 @@ def _find_pending_session():
     return None
 
 
-def log_print(*args, **kwargs):
-    ts = time.strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{ts}]", *args, **kwargs)
+# log_print 已迁移至 core.net（见文件顶部导入）
 
 
 # ================= 目录与配置初始化 =================
@@ -215,149 +219,8 @@ def _ensure_defaults():
         log_print("[初始化] 重建默认预设: _preset/default.json")
 
 
-def _load_config():
-    global config
-    with config_lock:
-        if CONFIG_FILE.exists():
-            try:
-                config = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-            except Exception as e:
-                log_print(f"[警告] config.json 解析失败: {e}")
-
-        # 补全缺省配置
-        if "mode" not in config:
-            config["mode"] = "api"
-        if "api" not in config:
-            config["api"] = {}
-        config.setdefault(
-            "embedding",
-            {
-                "enabled": False,
-                "base_url": "https://api.siliconflow.cn/v1",
-                "api_key": "",
-                "model": "BAAI/bge-m3",
-            },
-        )
-        config.setdefault(
-            "rerank",
-            {
-                "enabled": False,
-                "base_url": "https://api.siliconflow.cn/v1",
-                "api_key": "",
-                "model": "BAAI/bge-reranker-v2-m3",
-            },
-        )
-        config.setdefault("summary_api", {"base_url": "", "api_key": "", "model": ""})
-        config.setdefault(
-            "memory",
-            {
-                "recent_rounds": 10,
-                "summarize_every": 16,
-                "recall_n": 30,
-                "top_k": 5,
-                "recall_log": True,
-            },
-        )
-        config.setdefault("auth", {"enabled": False, "password": ""})
-        # 语音合成（MiniMax 预置音色 T2A）。base_url/api_key/group_id 留空即不生效，
-        # 填上公益站或官方源就能给每条 AI 回复挂语音；voice_id 用 MiniMax 预置音色名。
-        config.setdefault(
-            "tts",
-            {
-                "enabled": False,
-                "base_url": "https://api.minimax.chat/v1",
-                "api_key": "",
-                "group_id": "",
-                "model": "speech-01-turbo",
-                "voice_id": "female-tianmei",
-                "speed": 1.0,
-                "vol": 1.0,
-                "pitch": 0,
-                "format": "mp3",
-                "sample_rate": 32000,
-                "autoplay": True,
-                "skip_narration": False,  # True=只读台词、跳过（）【】*…*旁白与『』场景头
-            },
-        )
-
-
-def _save_config():
-    with config_lock:
-        CONFIG_FILE.write_text(
-            json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-
-
-def _http_post_json(url, payload, headers, timeout=90, max_retries=5, tag="LLM"):
-    """POST JSON 并解析返回。对 429 / 5xx / 连接超时做指数退避重试（优先尊重 Retry-After 头），
-    重试用尽仍失败则抛出最后一次异常，交调用方兜底。免费代理的瞬时限速不再一次就放弃。"""
-    delay = 2
-    last_exc = None
-    for attempt in range(max_retries + 1):
-        try:
-            req = urllib.request.Request(
-                url, data=json.dumps(payload).encode("utf-8"), headers=headers
-            )
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            last_exc = e
-            retryable = (e.code == 429) or (500 <= e.code < 600)
-            if not retryable or attempt >= max_retries:
-                raise
-            wait = delay
-            ra = e.headers.get("Retry-After") if e.headers else None
-            if ra:
-                try:
-                    wait = max(wait, float(ra))
-                except Exception:
-                    pass
-            log_print(
-                f"⏳ [{tag}] {e.code} 限速/服务端忙，{wait:.1f}s 后重试（{attempt + 1}/{max_retries}）"
-            )
-            time.sleep(wait)
-            delay = min(delay * 2, 8)
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
-            last_exc = e
-            if attempt >= max_retries:
-                raise
-            log_print(
-                f"⏳ [{tag}] 连接异常（{e}），{delay:.1f}s 后重试（{attempt + 1}/{max_retries}）"
-            )
-            time.sleep(delay)
-            delay = min(delay * 2, 8)
-    if last_exc:
-        raise last_exc
-
-
-# ================= 局域网访问口令鉴权 =================
-def _auth_cfg():
-    return config.get("auth") or {}
-
-
-def _auth_enabled():
-    a = _auth_cfg()
-    return bool(a.get("enabled") and a.get("password"))
-
-
-def _auth_token_for(password):
-    """口令 → 稳定 token（无状态，重启不失效）。token = sha256('chatbridge:'+口令)。"""
-    return hashlib.sha256(
-        ("chatbridge:" + (password or "")).encode("utf-8")
-    ).hexdigest()
-
-
-def _expected_token():
-    return _auth_token_for(_auth_cfg().get("password", ""))
-
-
-def _safe_decode(data):
-    for enc in ("utf-8", "gbk"):
-        try:
-            return data.decode(enc)
-        except Exception:
-            continue
-    return data.decode("utf-8", errors="replace")
+# _load_config / _save_config / _http_post_json / 鉴权助手(_auth_*) / _safe_decode
+# 均已迁移至 core.config 与 core.net（见文件顶部导入）。
 
 
 def _safe_name(name):
@@ -857,7 +720,7 @@ def ingest_reply(session, raw_reply):
 
 
 # ================= 语音合成（MiniMax 预置音色 T2A 旁路） =================
-TTS_DIR = DATA_DIR / "tts"
+# TTS_DIR 已迁移至 core.paths（见文件顶部导入）
 
 
 def _tts_cfg():
@@ -3100,11 +2963,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if agent.is_running(task_id):
                 self._json({"ok": False, "error": "该任务正在运行中"})
                 return
+            # 网关路由：默认走新的 5 阶段 Orchestrator；config.coding.orchestrator=false 可回退旧大循环。
+            with config_lock:
+                _use_orch = (config.get("coding", {}) or {}).get("orchestrator", True)
+            if _use_orch and _run_coding_orchestrator is not None:
+                _runner, _mode = _run_coding_orchestrator, "orchestrator"
+            else:
+                _runner, _mode = agent.run_agent_turn, "legacy"
+            print(f"[agent/send] task={task_id} 路由 -> {_mode}")
             # 后台线程跑，HTTP 立即返回；前端轮询 /api/agent/turns 取进度
             threading.Thread(
-                target=agent.run_agent_turn, args=(task_id, text), daemon=True
+                target=_runner, args=(task_id, text), daemon=True
             ).start()
-            self._json({"ok": True})
+            self._json({"ok": True, "mode": _mode})
 
         elif path == "/api/agent/delete":
             data = self._read_json()
