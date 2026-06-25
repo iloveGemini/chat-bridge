@@ -60,3 +60,8 @@ def _safe_decode(data):
         except Exception:
             continue
     return data.decode("utf-8", errors="replace")
+
+
+def _safe_name(name):
+    """只允许字母数字下划线短横线，防止路径穿越。"""
+    return "".join(c for c in (name or "") if c.isalnum() or c in "-_")

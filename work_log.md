@@ -80,3 +80,13 @@
 - 备注（无害遗留，未动）：tools/registry.py 的 get_assistant_tools（新工具系统的通用 legacy 访问器，
       无调用方）、tools/rp/list_targets.py 里对 "__assistant__" 的防御性过滤。两者都不是设定助手功能本体，
       留着零风险；要彻底清可下轮顺手删。
+
+## 模块化拆分 (server 瘦身, 第 3 刀: prompts + scene 域)
+- [x] _safe_name 迁入 core.net（通用名字净化，server 内 20 处引用改为导入）。
+- [x] 新建 chat/ 包 + chat/scene.py：_scene_stamp、build_scene_block（依赖 session.session 的 GENESIS_SCENE）。
+- [x] 新建 prompts/ 包 + prompts/prompts.py：_read_prompt_content、_resolve_preset、_get_display_name、
+      _apply_macros、build_header_prompt、build_tail_anchor（依赖 core.paths/net/config + chat.scene）。
+- 依赖链无环：prompts → chat.scene → session.session → core；server 仅 import 回这些符号。
+- 验证：全部 py_compile 通过；import server 成功，6 个提示词函数 + 2 个场景函数身份均指向新模块；
+      实跑 build_header_prompt/build_tail_anchor 拼装正常（含场景块 current_scene_state 与召回记忆注入）。
+- 遗留（无害）：测试产生的空目录 prompts_pkg_tmp、__prompttest__ 会话目录沙箱删不掉，data/ 与空目录都不入库。
