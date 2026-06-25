@@ -24,7 +24,13 @@ def load_config():
         if CONFIG_FILE.exists():
             try:
                 data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-                config.clear()
+                # 就地刷新但【绝不清空】：先删掉已不存在的键，再覆盖。
+                # 不能用 config.clear()+update()——那会在两步之间留下「config 暂时为空」的窗口，
+                # 别的线程（聊天/总结）不持锁读 config 时会偶发拿到空配置，导致
+                # config.get("summary_api")/("api") 返回空 → run_summary 静默早退（只见触发、无结果）。
+                for _k in list(config.keys()):
+                    if _k not in data:
+                        del config[_k]
                 config.update(data)
             except Exception as e:
                 log_print(f"[警告] config.json 解析失败: {e}")
