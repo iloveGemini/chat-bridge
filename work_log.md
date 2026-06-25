@@ -56,3 +56,13 @@
       default_user=Joy 保留、鉴权/路径/日志全部走 core。
 - 下一刀（未做）：session（ChatSession+get_session+sessions_map）、prompts、memory 依次外迁，
       最后把 79 个路由按域拆进 routes/。
+
+## 模块化拆分 (server 瘦身, 第 2 刀: session 域)
+- [x] 新建 session/ 包：session.py 收纳 ChatSession 类、get_session、sessions_map、
+      global_pending_event、_session_scope、_resolve_session_worldbooks，以及 GENESIS_SCENE /
+      SESSION_BINDING_KEYS 两个会话域常量。
+- [x] sessions_map / global_pending_event 同样是【就地修改】单例，server 改为 import 回来，
+      集成测试已验证 server.sessions_map is session.session.sessions_map 恒成立。
+- [x] 依赖干净：session.py 只依赖 core.paths 与 memory_store（已确认 memory_store 无回环）。
+- 验证：py_compile 通过；import server 成功，ChatSession/get_session/单例身份全部指向 session 模块，
+      config 仍跨模块同一；实际 get_session() 建会话、场景闩锁、绑定键均正常；记忆区头注释无重复。
