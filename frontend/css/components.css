@@ -1788,3 +1788,43 @@
   background: rgba(255, 255, 255, 0.05);
   border-radius: 4px;
 }
+
+/* --- Chats 消息列表左滑交互 --- */
+.chat-swipe-wrap {
+  position: relative;
+  overflow: hidden;
+  background: var(--list-bg);
+  border-bottom: 1px solid var(--border-color);
+  /* 强制硬件加速，解决圆角或滑动溢出 */
+  transform: translateZ(0);
+  isolation: isolate;
+}
+.chat-actions {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  z-index: 0;
+}
+.chat-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 65px;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  text-align: center;
+  line-height: 1.2;
+}
+.chat-item-inner {
+  position: relative;
+  z-index: 1;
+  background: var(--list-bg);
+  transition: transform 0.2s ease-out;
+  border-bottom: none !important; /* 边框交由外层 wrap 处理 */
+  /* 屏蔽原生拖拽 */
+  -webkit-user-drag: none;
+  user-select: none;
+}
