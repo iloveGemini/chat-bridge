@@ -404,7 +404,7 @@ def execute_tool(name, args, context):
                         disp = json.loads(cfile.read_text(encoding="utf-8")).get(
                             "name", char
                         )
-                    except:
+                    except Exception:
                         pass
                 out.append(
                     {"session_id": d.name, "character": char, "character_name": disp}
@@ -470,7 +470,7 @@ def execute_tool(name, args, context):
                         disp = json.loads(f.read_text(encoding="utf-8")).get(
                             "name", f.stem
                         )
-                    except:
+                    except Exception:
                         pass
                     out.append({"name": f.stem, "display_name": disp})
             return {"prompts": out}
@@ -532,7 +532,7 @@ def execute_tool(name, args, context):
                                 **json.loads(f.read_text(encoding="utf-8")),
                             }
                         )
-                    except:
+                    except Exception:
                         out.append({"name": f.stem})
             return {"presets": out}
 
@@ -770,6 +770,11 @@ def execute_tool(name, args, context):
             if not cmd:
                 return {"error": "命令不能为空"}
             try:
+                import sys
+
+                if sys.platform == "win32" and not cmd.strip().startswith("chcp"):
+                    cmd = f"chcp 65001 >nul & {cmd}"
+
                 result = subprocess.run(
                     cmd,
                     shell=True,

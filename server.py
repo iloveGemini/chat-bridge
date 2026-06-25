@@ -287,10 +287,10 @@ def _save_config():
         )
 
 
-def _http_post_json(url, payload, headers, timeout=90, max_retries=4, tag="LLM"):
+def _http_post_json(url, payload, headers, timeout=90, max_retries=5, tag="LLM"):
     """POST JSON 并解析返回。对 429 / 5xx / 连接超时做指数退避重试（优先尊重 Retry-After 头），
     重试用尽仍失败则抛出最后一次异常，交调用方兜底。免费代理的瞬时限速不再一次就放弃。"""
-    delay = 0.5
+    delay = 2
     last_exc = None
     for attempt in range(max_retries + 1):
         try:
@@ -408,8 +408,8 @@ def _get_display_name(category, file_name, default_val):
     if p_file.exists():
         try:
             return json.loads(p_file.read_text(encoding="utf-8")).get("name", file_name)
-        except:
-            pass
+        except Exception as e:
+            log_print(f"[警告] 读取展示名称 {p_file} 失败: {e}")
     return file_name
 
 
@@ -517,7 +517,7 @@ class ChatSession:
         # 本会话手动挂载的额外世界书 id 列表（角色/用户绑定的会自动并入，不存这里）
         self.active_worldbooks = []
         self.last_llm_payload = None
-
+        self.interrupted = False
         # 场景闩锁：创世默认，随后从历史末条带戳消息恢复（重启不丢时空）
         self.current_scene_id = GENESIS_SCENE["scene_id"]
         self.current_time = GENESIS_SCENE["time"]
@@ -1331,7 +1331,10 @@ def summarize_session(session, full=False):
     """从 boundary 推进总结。full=True 把积压全部补完（分批，带状态）。"""
     sid = session.session_id
     batch = _summ_batch()
-    _now = lambda: time.strftime("%Y-%m-%d %H:%M:%S")
+
+    def _now():
+        return time.strftime("%Y-%m-%d %H:%M:%S")
+
     _set_summ_meta(sid, state="running", last_error="")
     try:
         while True:
@@ -1340,7 +1343,11 @@ def summarize_session(session, full=False):
                 b = _summ_meta(sid).get("boundary", 0)
                 if b > total:
                     b = 0  # 消息被清空/缩短 → 重置边界
-                window = list(session.messages[b : b + batch])
+                window = [
+                    m
+                    for m in session.messages[b : b + batch]
+                    if m.get("type") not in ("reasoning", "tool_call", "tool_result")
+                ]
             # 非 full 需攒够一批；full 时剩余 >=2 条也总结
             if (len(window) < 2) if full else (len(window) < batch):
                 break
@@ -1454,6 +1461,23 @@ def set_session_tools(session_id, patch):
 PROTECTED_PROMPT_NAMES = {"default", ASSISTANT_CHAR_KEY}
 
 
+def _list_targets():
+    """列出当前可配置的会话目标，用于设定助手提示。"""
+    targets = []
+    for d in SESSIONS_DIR.iterdir():
+        if not d.is_dir():
+            continue
+        try:
+            s = get_session(d.name)
+            char_name = _get_display_name(
+                "character", s.active_prompts.get("character"), "AI助手"
+            )
+            targets.append({"session_id": d.name, "character_name": char_name})
+        except Exception:
+            continue
+    return targets
+
+
 def call_assistant_api(session_id):
     """设定助手专用：原生 tool_calls 多轮循环。不走 RP 三明治、不触发记忆总结。"""
     session = get_session(session_id)
@@ -1464,7 +1488,11 @@ def call_assistant_api(session_id):
         session.is_typing = True
         session.typing_ts = time.time()
         session.pending_event.set()
-        recent = list(session.messages[-40:])
+        recent = [
+            m
+            for m in session.messages
+            if m.get("type") not in ("reasoning", "tool_call", "tool_result")
+        ][-40:]
 
     sys_prompt = BUILTIN_ASSISTANT_PROMPT
     targets = _list_targets()
@@ -1598,7 +1626,11 @@ def _generate_proactive_message(session, intention):
     )
 
     with session.lock:
-        recent = list(session.messages[-(_memory_cfg().get("recent_rounds", 10) * 2) :])
+        recent = [
+            m
+            for m in session.messages
+            if m.get("type") not in ("reasoning", "tool_call", "tool_result")
+        ][-(_memory_cfg().get("recent_rounds", 10) * 2) :]
     api_messages = [{"role": "system", "content": header_prompt}]
     for m in recent:
         if m.get("role") in ("user", "assistant"):
@@ -1858,8 +1890,11 @@ def call_llm_api(session_id):
         session.current_status = "正在思考..."
         session.pending_event.set()
         recent_rounds = _memory_cfg().get("recent_rounds", 10)
-        recent_msgs = list(session.messages[-(recent_rounds * 2) :])
-        current_msg_len = len(session.messages)
+        recent_msgs = [
+            m
+            for m in session.messages
+            if m.get("type") not in ("reasoning", "tool_call", "tool_result")
+        ][-(recent_rounds * 2) :]
         last_user_text = next(
             (
                 m.get("text", "")
@@ -2036,16 +2071,40 @@ def call_llm_api(session_id):
     try:
         raw_reply = ""
         for _round in range(99):
+            if session.interrupted:
+                log_print(f"🚫 [LLM 请求][{session_id}] 已被用户中断")
+                return
             res_data = _post(payload)
+            if session.interrupted:
+                log_print(f"🚫 [LLM 请求][{session_id}] 已被用户中断")
+                return
             choice = res_data["choices"][0]["message"]
             tcs = choice.get("tool_calls") or []
 
             # 👇 [修改 2]：在这里拦截并打印 AI 的思考过程（上帝视角）
-            ai_thought = choice.get("content")
-            if ai_thought:
-                print(
-                    f"\n🧠 [AI 思考][{session_id}]:\n{ai_thought.strip()}\n" + "-" * 40
+            ai_thought = choice.get("reasoning_content")
+            if not ai_thought:
+                ai_thought_match = re.search(
+                    r"<think>(.*?)</think>", choice.get("content") or "", re.DOTALL
                 )
+                if ai_thought_match:
+                    ai_thought = ai_thought_match.group(1)
+
+            if ai_thought:
+                # print(
+                #    f"\n🧠 [AI 思考][{session_id}]:\n{ai_thought.strip()}\n" + "-" * 40
+                # )
+                with session.lock:
+                    session.messages.append(
+                        {
+                            "role": "assistant",
+                            "type": "reasoning",
+                            "text": ai_thought.strip(),
+                            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                            **_scene_stamp(session),
+                        }
+                    )
+                session.save_messages_async()
 
             if not tcs:
                 raw_reply = (choice.get("content") or "").strip()
@@ -2068,8 +2127,17 @@ def call_llm_api(session_id):
 
                 with session.lock:
                     session.current_status = f"正在调用工具: {fname}..."
-
-                # 👇 [修改 3]：在这里打印详细的工具调用参数
+                    session.messages.append(
+                        {
+                            "role": "assistant",
+                            "type": "tool_call",
+                            "tool_name": fname,
+                            "tool_args": a,
+                            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                            **_scene_stamp(session),
+                        }
+                    )
+                session.save_messages_async()
                 # 👇 [修改 3]：在这里打印详细的工具调用参数
                 print(f"⚙️  [调度工具]: {fname}")
                 if fname == "run_terminal_command":
@@ -2088,7 +2156,8 @@ def call_llm_api(session_id):
                         print(f"         + {new_text_preview}...")
                 elif fname == "batch_write_files":
                     for f in a.get("files", []):
-                        print(f"   > 写入文件: {f.get('filepath')}")
+                        # print(f"   > 写入文件: {f.get('filepath')}")
+                        pass
                 elif fname == "grep_files":
                     print(f"   > 搜索内容: '{a.get('pattern')}'")
                 elif fname == "read_file_with_lines":
@@ -2114,6 +2183,22 @@ def call_llm_api(session_id):
                 # 👆 原有的工具派发执行区域 👆
                 # ==========================
 
+                with session.lock:
+                    session.messages.append(
+                        {
+                            "role": "assistant",
+                            "type": "tool_result",
+                            "tool_name": fname,
+                            "text": json.dumps(r, ensure_ascii=False),
+                            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                            **_scene_stamp(session),
+                        }
+                    )
+                session.save_messages_async()
+                # ==========================
+                # 👆 原有的工具派发执行区域 👆
+                # ==========================
+
                 api_messages.append(
                     {
                         "role": "tool",
@@ -2125,7 +2210,7 @@ def call_llm_api(session_id):
                 f"🛠️ [角色工具][{session_id}] 执行 {len(tcs)} 个 "
                 f"({', '.join((t.get('function') or {}).get('name', '?') for t in tcs)})"
             )
-            
+
             with session.lock:
                 session.current_status = "正在思考..."
 
@@ -2278,7 +2363,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             body = _safe_decode(self.rfile.read(length))
             try:
                 data = json.loads(body)
-            except:
+            except Exception:
                 data = {"text": body}
 
             text = data.get("text", "").strip()
@@ -2325,6 +2410,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 # pending 是前端等待锁的唯一判据：从用户发送这一刻起就 pending，
                 # 不管 api/claude_mode，直到真正有回复（或中断/清空）才解除，不依赖 is_typing 的 120s 超时。
                 session.pending_event.set()
+                session.interrupted = False
             session.save_active_prompts()  # (注意原有代码这里可能是 save_messages_async，保持你的原有调用即可)
             session.save_messages_async()
             clean_input = " ".join(text.split())
@@ -2347,13 +2433,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 session.pending_event.clear()
                 session.pending_text = ""
                 session.is_typing = False
+                session.interrupted = True
             session.save_messages_async()
-            self._json({"ok": True})
-
         elif path == "/api/reply":
             length = int(self.headers.get("Content-Length", 0))
             body = _safe_decode(self.rfile.read(length))
             _rbody = json.loads(body) if "{" in body else {"text": body}
+            
+            with session.lock:
+                if session.interrupted:
+                    log_print(f"🚫 [claude_mode 丢弃回复][{session_id}] 会话已被中断，丢弃此条回复。")
+                    # 不要在这里设 session.interrupted = False，因为可能还有后续工具调用返回
+                    self._json({"ok": True})
+                    return
+
             reply_txt = (_rbody.get("text", "") or "").strip()
             is_proactive = bool(_rbody.get("proactive"))
             # claude_mode 回复同样走信封解析：推进场景闩锁，只落干净正文
@@ -2445,8 +2538,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             with session.lock:
                 session.is_typing = False
                 session.pending_event.clear()
+                session.interrupted = True
             self._json({"ok": True})
-
         elif path == "/api/typing":
             with session.lock:
                 session.is_typing = True
@@ -2484,6 +2577,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     and session.messages[idx]["role"] == "assistant"
                 ):
                     session.messages.pop(idx)
+                session.interrupted = False
             session.save_messages_async()
             if config.get("mode") == "api":
                 threading.Thread(target=call_llm_api, args=(session_id,)).start()
@@ -2592,7 +2686,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     char_label = json.loads(cfile.read_text(encoding="utf-8")).get(
                         "name", character
                     )
-                except:
+                except Exception:
                     pass
             char_label = _safe_name(char_label) or character
             existing_ids = [d.name for d in SESSIONS_DIR.iterdir() if d.is_dir()]
@@ -2688,7 +2782,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 if meta_file.exists():
                     try:
                         meta = json.loads(meta_file.read_text(encoding="utf-8"))
-                    except:
+                    except Exception:
                         pass
                 meta["pinned"] = not meta.get("pinned", False)
                 meta_file.write_text(
@@ -3077,7 +3171,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                         pinned = json.loads(meta_file.read_text(encoding="utf-8")).get(
                             "pinned", False
                         )
-                    except:
+                    except Exception:
                         pass
 
                 s_list.append(
@@ -3132,7 +3226,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                             "avatar": cdata.get("avatar", ""),
                         }
                     )
-                except:
+                except Exception:
                     char_list.append({"key": f.stem, "name": f.stem, "avatar": ""})
 
             # 用户分身（“我”页主名片 + 平行分身）：解析 user 类别下的完整资料
@@ -3148,7 +3242,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                             "content": udata.get("content", ""),
                         }
                     )
-                except:
+                except Exception:
                     user_list.append(
                         {"key": f.stem, "name": f.stem, "avatar": "", "content": ""}
                     )
@@ -3361,7 +3455,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             q = query.get("q", [""])[0]
             try:
                 k = int(query.get("k", ["5"])[0])
-            except:
+            except ValueError:
                 k = 5
             scope = _session_scope(session)
             qv = embed_query(q) if q else None
