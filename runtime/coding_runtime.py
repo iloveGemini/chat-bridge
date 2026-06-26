@@ -32,7 +32,7 @@ import tooling
 # ---------------------------------------------------------------------------
 # 路径与配置
 # ---------------------------------------------------------------------------
-ROOT = Path(__file__).parent
+ROOT = Path(__file__).resolve().parent.parent  # runtime/ 的上一层 = 项目根
 DATA_DIR = ROOT / "data"
 AGENT_DB = DATA_DIR / "agent.db"
 WORKSPACES_DIR = DATA_DIR / "agent_workspaces"

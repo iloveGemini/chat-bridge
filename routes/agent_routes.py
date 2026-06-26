@@ -3,7 +3,7 @@
 import threading
 from pathlib import Path
 
-import agent
+import runtime.coding_runtime as agent
 from core.config import config, config_lock
 from agents.manager import run_coding
 from routes.registry import post, get

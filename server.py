@@ -10,7 +10,7 @@ import threading
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-import agent  # 独立的 Code Agent 模块（自驱工具循环 + 沙箱工作区 + 进度卡）
+import runtime.coding_runtime as agent  # 独立的 Code Agent 模块（自驱工具循环 + 沙箱工作区 + 进度卡）
 
 try:
     # 新的 5 阶段 Coding Orchestrator（agent.py 退化为其底层能力库）

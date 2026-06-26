@@ -11,7 +11,7 @@
 """
 import json
 
-import agent
+import runtime.coding_runtime as agent
 from core.paths import PROMPTS_DIR
 from tools.registry import get_tools, execute_tool
 from agents.engine import run_tool_loop

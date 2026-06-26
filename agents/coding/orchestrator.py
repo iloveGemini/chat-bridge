@@ -17,7 +17,7 @@ Coding Agent 的核心调度器 (Orchestrator) —— 5 阶段状态机。
 """
 import json
 
-import agent
+import runtime.coding_runtime as agent
 from agents.coding.state import CodingState
 from agents.coding.roles import ROLE_PROMPTS
 from tools.registry import get_tools, execute_tool
