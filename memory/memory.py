@@ -10,6 +10,7 @@ import urllib.request
 
 from core.config import config, load_config as _load_config
 from core.net import log_print, _http_post_json, _extract_json
+from core.model_params import build_sampling
 from core.paths import SESSIONS_DIR
 from session.session import (
     _session_scope, _resolve_session_worldbooks, GENESIS_SCENE, get_session,
@@ -253,7 +254,7 @@ def run_summary(session, chat_history):
             {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
             {"role": "user", "content": user_content},
         ],
-        "temperature": 0.2,
+        **build_sampling(api_cfg, 0.2),
     }
     try:
         _res = _http_post_json(

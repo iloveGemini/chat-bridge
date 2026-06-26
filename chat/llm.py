@@ -7,6 +7,7 @@ import time
 
 from core.config import config, load_config as _load_config
 from core.net import log_print, _http_post_json
+from core.model_params import build_sampling
 from core.paths import ROOT, PROMPTS_DIR, SESSIONS_DIR
 from prompts.prompts import _get_display_name, _apply_macros
 from prompts.assembler import PromptAssembler
@@ -104,7 +105,7 @@ def call_llm_api(session_id):
     payload = {
         "model": api_cfg.get("model", "deepseek-chat"),
         "messages": api_messages,
-        "temperature": 0.7,
+        **build_sampling(api_cfg, 0.7),
     }
 
     session.last_llm_payload = {

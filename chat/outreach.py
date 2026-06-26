@@ -4,6 +4,7 @@ import time
 
 from core.config import config, load_config as _load_config
 from core.net import log_print, _http_post_json
+from core.model_params import build_sampling
 from prompts.prompts import _get_display_name, _apply_macros
 from prompts.assembler import PromptAssembler
 from memory.memory import build_injected_memory, _memory_cfg
@@ -68,7 +69,7 @@ def _generate_proactive_message(session, intention):
     payload = {
         "model": api_cfg.get("model", "deepseek-chat"),
         "messages": api_messages,
-        "temperature": 0.8,
+        **build_sampling(api_cfg, 0.8),
     }
     try:
         res = _http_post_json(

@@ -1,4 +1,4 @@
-### 项目模块化管理
+### 项目模块化管理(已转化为ARCHITECTURE)
 
 1. 模块化输出。
    - 采用xml标签来解析AI输入，进行标准化格式管理。
@@ -19,3 +19,6 @@
 5. Agent管理员
    - 不同的Agent如何一起协作？采用Manager路由。
    - 该Manager可以是本地死代码，也可以由一个Manager Agent进行动态管理。
+
+
+# BUG RECORD
