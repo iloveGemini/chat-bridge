@@ -62,6 +62,7 @@ def run_phase(role, handoff, *, chat_fn, tool_ctx, task_id,
     （与原 orchestrator._run_phase 逐字节等价。）"""
     tools = get_tools(role)
     messages = build_phase_messages(role, handoff, workspace_tree)
+    _findings = []  # 侦察兵用工具读到的原文，要带给下游(否则只剩它最后一句总结)
 
     def _emit(kind, data):
         if emit:
@@ -98,6 +99,10 @@ def run_phase(role, handoff, *, chat_fn, tool_ctx, task_id,
         result_str = json.dumps(result, ensure_ascii=False)
         agent.add_turn(task_id, "assistant", "tool_result", result_str, tool_name=name)
         _emit("tool_result", {"name": name, "result": result})
+        # 收集工具读到的原文，供下游(develop)直接使用
+        _findings.append(
+            f"# {name} {json.dumps(args, ensure_ascii=False)[:120]}\n{result_str[:3000]}"
+        )
 
     out = run_tool_loop(
         messages=messages, tools=tools, max_rounds=max_rounds,
@@ -112,13 +117,24 @@ def run_phase(role, handoff, *, chat_fn, tool_ctx, task_id,
 
     stop = out.get("stop")
     content = (out.get("content") or "").strip()
+
+    # 侦察兵的价值在它读到的代码：把工具读取的原文一并带出，
+    # 否则只剩它最后一句总结，develop 拿不到真正的代码。
+    text = content
+    tool_log = ("\n\n".join(_findings)).strip()[:12000]
+    if role == "searcher" and tool_log:
+        text = (
+            (content + "\n\n" if content else "")
+            + "【侦察读到的原始内容（已贴出，开发时可直接使用，不必重复读取）】\n"
+            + tool_log
+        ).strip()
+
     if stop == "cancelled":
         return {"cancelled": True, "text": ""}
     if stop == "intercepted":
         return {"clarify": True, "clarify_payload": out["intercept"]["payload"], "text": content}
-    if stop == "no_tools":
-        return {"text": content}
-    return {"text": ""}
+    # no_tools(正常给出结论) 与 max_rounds(用满轮数) 都要把结果带出，绝不能丢
+    return {"text": text}
 
 
 class CodingPhaseAgent(BaseAgent):

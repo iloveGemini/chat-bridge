@@ -126,7 +126,7 @@ def _approve_plan(h, query, session, session_id):
         h._json({"ok": False, "error": "任务不存在"})
         return
     from agents.coding.state import CodingState
-    CodingState(task["workspace"]).set("resume_at", "develop")
+    CodingState(task["workspace"]).set("plan_approved", True)  # 批准 → 经理这轮派 developer 不再暂停
     agent.add_turn(tid, "system", "text", "▶️ 已批准计划，开始执行")
     threading.Thread(target=run_coding, args=(tid, ""), daemon=True).start()
     h._json({"ok": True})

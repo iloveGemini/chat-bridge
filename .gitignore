@@ -3,6 +3,7 @@ config.json
 
 # ── 运行时 & 个人数据（聊天记录 / 记忆库 / 上传图片 / 归档）──
 .claude/
+.venv/
 data/
 _backups/
 chat_summary.md

@@ -1,15 +1,44 @@
 {
-  "phase": "check",
-  "todos": [],
+  "phase": "plan",
+  "todos": [
+    {
+      "done": false,
+      "text": "调查前端 codingAgentView.js 中 Server Workspace 的选中与发送逻辑，以及后端路由的接收情况"
+    },
+    {
+      "done": false,
+      "text": "调查 tools/coding/ 目录和角色定义，准备新增添加/移除工作区文件的工具"
+    },
+    {
+      "done": false,
+      "text": "调查 codingAgentView.js 顶部的任务进度卡 DOM 和更新逻辑"
+    },
+    {
+      "done": false,
+      "text": "定位并移除 codingAgentView.js 右上角的设置按钮"
+    },
+    {
+      "done": false,
+      "text": "根据调查结果，修改前后端代码以修复 Server Workspace 接入"
+    },
+    {
+      "done": false,
+      "text": "编写新增的工作区文件管理工具，并分配给 searcher 和 develop 角色"
+    },
+    {
+      "done": false,
+      "text": "修复任务进度卡显示问题，并移除设置按钮"
+    }
+  ],
   "current_todo_index": 0,
   "context_files": [],
-  "plan_text": "我已经收到了侦察兵整理的详细项目资料，这份说明书非常全面，涵盖了架构、Agent 开发、Tool 开发、提示词规范以及记忆系统等核心模块。\n\n接下来，我会将这份《Chat Bridge 项目开发说明书》写入到项目根目录下的 `DEVELOPMENT.md` 文件中，方便以后作为 Agent 开发和修改代码的参考。\n\n### 执行计划：\n1. **创建文档**：在项目根目录下创建 `DEVELOPMENT.md` 文件。\n2. **写入内容**：将侦察兵整理的《Chat Bridge 项目开发说明书》完整内容写入该文件。\n\n系统将直接进入开发阶段为你生成该。\n进入开发阶段，为你生成这份说明书很快就会为你准备完毕。\n。",
-  "search_text": "为了编写一份高质量的项目开发说明书，我深入调研了项目的核心架构、模块职责以及现有的开发模式。以下是基于当前代码库现状整理的**《Chat Bridge 项目开发说明书》**。\n\n---\n\n# Chat Bridge 项目开发说明书\n\n本说明书旨在指导开发者（人类或 Agent）理解 Chat Bridge 的架构设计、模块职责，并规范新功能（如新 Agent 或新 Tool）的开发流程。\n\n## 1. 项目架构概述\n\n项目采用**模块化生态架构**，核心思想是“一切皆策略”。通过将复杂的逻辑拆分为独立的领域模块，实现了高内聚低耦合。\n\n### 核心目录结构\n- **`core/`**: 基础核心层。包含全局配置 (`config.py`)、路径常量 (`paths.py`) 和网络/工具函数 (`net.py`)。\n- **`agents/`**: 智能体层。定义了 `BaseAgent` 基类和 `Manager` 路由机制。\n- **`tools/`**: 工具池。按领域拆分的原子工具（如 `coding`, `rp`, `common`），支持 RBAC 权限控制。\n- **`prompts/`**: 提示词管理。包含 `PromptAssembler`（提示词组装器）和各类角色提示词模板。\n- **`memory/`**: 记忆系统。负责长短期记忆的存储、向量检索、增量总结及世界书（Lore）注入。\n- **`chat/`**: 聊天链路。处理 LLM 调用、信封解析（XML 标签）、场景管理、TTS 和主动外联。\n- **`routes/`**: 路由层。将 HTTP 接口按领域拆分（如 `agent_routes.py`, `chat_routes.py`）。\n- **`session/`**: 会话管理。维护会话状态、工具授权开关及上下文。\n\n---\n\n## 2. Agent 开发指南\n\nAgent 是处理特定任务的逻辑单元。项目支持多 Agent 协同，由 `Manager` 负责调度。\n\n### 如何开发一个新的 Agent\n1.  **继承基类**：在 `agents/` 下创建新模块，继承 `agents.base.BaseAgent`。\n2.  **定义属性**：\n    - `agent_type`: 唯一的字符串标识。\n    - `default_tool_grant()`: 返回该 Agent 默认拥有的工具组名（如 `[\"coding\", \"web\"]`）。\n    - `prompt_descriptor()`: (可选) 返回用于前端配置的提示词 ID 和默认文本。\n3.  **实现核心逻辑**：\n    - 实现 `run(ctx: AgentContext) -> AgentResult` 方法。\n    - `AgentContext` 包含 `session_id`, `history`, `user_msg` 等上下文。\n    - `AgentResult` 需返回状态（`done`, `need_handoff`, `need_user`）及输出内容。\n4.  **注册 Agent**：在 `agents/manager.py` 中导入并确保其被注册到 `_AGENTS` 字典中。\n\n### 典型案例：Coding Agent\n- **位置**: `agents/coding/orchestrator.py`\n- **模式**: 5 阶段状态机（Plan → Search → Code → Write → Check）。\n- **特点**: 每个阶段使用不同的角色（Role）和工具权限，通过 `CodingState` 传递中间产物。\n\n---\n\n## 3. Tool 开发指南\n\n工具是 Agent 与外部世界交互的唯一途径。\n\n### 如何添加一个新的 Tool\n1.  **创建文件**：在 `tools/<category>/` 下创建新的 `.py` 文件（例如 `tools/common/my_tool.py`）。\n2.  **实现接口**：\n    - `get_schema()`: 返回符合 OpenAI Function Calling 规范的 JSON Schema。\n    - `execute(args, context)`: 实现具体的执行逻辑。`context` 中包含 `session_id` 和安全路径解析回调。\n3.  **自动加载**：`tools/registry.py` 会自动扫描子包并加载含有上述接口的模块。\n4.  **配置权限 (RBAC)**：\n    - 在 `tools/registry.py` 的 `ROLE_PERMISSIONS` 中，将工具名分配给对应的角色（如 `planner`, `developer`）。\n    - 如果是新类别，可能需要更新 `TOOL_GROUPS`。\n\n---\n\n## 4. 提示词与输出规范\n\n### 提示词组装 (Prompt Assembly)\n项目使用 `prompts/assembler.py` 统筹提示词结构，固定骨架如下：\n- **System 头**: `Main` → `World/Env` → `Role` → `User` → `Memory(before)`\n- **History**: 真实的消息数组（保持多轮对话结构）。\n- **Tail**: `Status` → `Memory(after)` → `Tone/Style` → `Post` → `Reasoning` → `Output_Format`\n\n### 输出信封 (Output Envelope)\n- **原则**: 给人看的/流式的用 **XML 标签**；给机器看的/非流式的用 **JSON**。\n- **常用标签**:\n    - `<msg><content>...</content></msg>`: 标准对话信封。\n    - `<thinking>`: 思考链（前端自动折叠）。\n    - `<scene id=\"...\" time=\"...\" place=\"...\" />`: 场景转场标记。\n\n---\n\n## 5. 记忆与上下文注入\n\n### 注入管道\n- **位置**: `memory/memory.py` 中的 `build_injected_memory`。\n- **策略**:\n    - `position=\"before\"`: 注入到 System 提示词头部（适合常驻设定、核心事实）。\n    - `position=\"after\"`: 注入到历史记录之后（适合召回的事件、相关回忆）。\n- **来源**: 统一处理 `worldbook` (手动录入) 和 `memory` (自动总结)。\n\n---\n\n## 6. 运行与调试\n\n- **入口文件**: `server.py`。\n- **启动命令**: `python server.py` (默认端口 8800)。\n- **状态检查**: 访问 `http://localhost:8800/api/status`。\n- **日志**: 关键逻辑使用 `core.net.log_print` 输出，支持前端 `/api/logs` 实时查看。\n\n---\n\n**开发者注意**：在修改代码前，请务必阅读 `ARCHITECTURE.md` 以了解最新的架构决策，并参考 `work_log.md` 确认当前的开发进度。",
+  "plan_text": "由于上一轮执行中开发者遗漏了后端文件的修改、新工具的创建以及部分前端逻辑的修复，这次我们需要严格按照侦察兵带回的详细资料，将所有步骤逐一落实到位。\n\n### 最终执行计划 (Coding Plan)\n\n**1. 前端：修复工作区文件添加与移除逻辑**\n- **文件**: `frontend/js/views/codeAgentView.js`\n- **修改**: \n  - 找到 `addFileToWorkspace` 方法，修改其逻辑：调用后端 API `api.agentContextAdd(this.currentTaskId, filename, \"outline\")`，并在成功后调用刷新上下文的方法（如 `this.loadContext()` 或重新渲染）。\n  - 找到处理文件移除的逻辑（通常是 `.remove-file` 的点击事件），确保它正确调用 `api.agentContextRemove(this.currentTaskId, filename)`，并在成功后刷新 UI，保持前后端状态同步。\n\n**2. 前端：移除右上角设置按钮**\n- **文件**: `frontend/index.html` & `frontend/js/views/codeAgentView.js`\n- **修改**: \n  - 在 `index.html` 中，找到并彻底删除 `id=\"ca-settings-btn\"` 的 DOM 元素。\n  - 在 `codeAgentView.js` 中，移除所有与 `ca-settings-btn` 相关的事件监听和引用。调整“执行模式”按钮（`ca-mode-btn`）的挂载逻辑，使其直接挂载到 `workspace-header` 中。\n\n**3. 后端：修复顶部任务计划渲染 & 增强上下文**\n- **文件**: `runtime/coding_runtime.py`\n- **修改**: \n  - 修改 `get_task` 函数：在读取数据库任务信息后，尝试加载对应工作区下的 `state.json` 文件。将 `state.json` 中的 `todos`、`phase` 等进度信息合并到返回的任务字典中，以便前端 `renderTodos` 能够正确渲染顶部计划。\n  - 确保在工具执行的上下文（context）中注入 `task_id`，以便新增的工具能够获取当前任务 ID 并修改上下文。\n\n**4. Agent 工具：新增添加/移除文件工具**\n- **文件**: `tools/coding/pin_file.py` (新建) & `tools/coding/unpin_file.py` (新建)\n- **修改**:\n  - 编写这两个工具，使其调用 `runtime/coding_runtime.py` 中的 `add_context` 和 `remove_context` 函数（或直接操作数据库/状态）。工具需要从上下文中获取 `task_id`。\n\n**5. 工具权限分配**\n- **文件**: `tools/registry.py`\n- **修改**:\n  - 在 `ROLE_PERMISSIONS` 中，将 `pin_file` 和 `unpin_file` 分配给 `searcher` 和 `developer` 角色。\n\n请开发者严格按照以上 5 个步骤执行，不要遗漏任何一个文件。",
+  "search_text": "根据您的需求，我已完成对 `codeAgentView.js` 相关问题的侦察。以下是修复方案的详细分析：\n\n### 1. 前端 `addFileToWorkspace` 和 `Remove` 修复\n*   **问题**：`addFileToWorkspace` 目前仅更新了本地 `this.workspaceFiles` 数组，并未调用后端 API。而 UI 渲染（`renderFiles`）实际上是基于 `this.pinnedContext` 的，导致状态不同步。\n*   **修复**：\n    *   修改 `frontend/js/views/codeAgentView.js` 中的 `addFileToWorkspace`，使其调用 `api.agentContextAdd(this.currentTaskId, filename, \"outline\")` 并刷新上下文。\n    *   确保 `remove-file` 的点击事件（已存在）能正确触发 `api.agentContextRemove` 并刷新 UI。\n\n### 2. 为 Coding Tools 加入添加/移除工具并分配角色\n*   **方案**：\n    *   在 `tools/coding/` 目录下新建 `pin_file.py` 和 `unpin_file.py`。这两个工具将调用 `runtime/coding_runtime.py` 中的 `add_context` 和 `remove_context` 函数。\n    *   在 `tools/registry.py` 的 `ROLE_PERMISSIONS` 中，将 `pin_file` 和 `unpin_file` 分配给 `searcher` 和 `developer` 角色。\n    *   在 `runtime/coding_runtime.py` 中，将 `task_id` 加入到工具执行的 `context` 中，以便工具能识别当前任务。\n\n### 3. 修复顶部任务计划渲染\n*   **问题**：`codeAgentView.js` 的 `renderTodos` 方法依赖于 `task.todos` 数据，但目前的后端 API `/api/agent/task` 返回的 `task` 对象并未包含来自 `state.json` 的 Todo 列表。\n*   **修复**：\n    *   修改 `runtime/coding_runtime.py` 中的 `get_task` 函数，使其在读取数据库任务信息后，尝试加载对应工作区下的 `state.json`，并将其中的 `todos`、`phase` 等进度信息合并到任务对象中返回。\n\n### 4. 移除右上角设置按钮\n*   **修复**：\n    *   在 `frontend/index.html` 中删除 `id=\"ca-settings-btn\"` 的按钮元素。\n    *   在 `frontend/js/views/codeAgentView.js` 中移除相关的事件监听器，并调整“执行模式”按钮（`ca-mode-btn`）的挂载逻辑，使其直接挂载到 `workspace-header` 中。\n\n### 待修改文件清单：\n1.  `frontend/js/views/codeAgentView.js` (前端逻辑)\n2.  `frontend/index.html` (移除按钮)\n3.  `runtime/coding_runtime.py` (后端数据合并与上下文增强)\n4.  `tools/registry.py` (工具权限分配)\n5.  `tools/coding/pin_file.py` (新增工具)\n6.  `tools/coding/unpin_file.py` (新增工具)\n\n我已准备好提交这些更改。",
   "diffs_text": "```json\n[\n  {\n    \"file\": \"session/tools.py\",\n    \"action\": \"replace\",\n    \"search\": \"SESSION_TOOL_DEFAULTS = {\\\"outreach\\\": True, \\\"web\\\": False, \\\"coding\\\": False}\",\n    \"replace\": \"SESSION_TOOL_DEFAULTS = {\\\"outreach\\\": True, \\\"web\\\": False, \\\"coding\\\": True}\",\n    \"description\": \"将 coding 工具组的默认权限设置为 True，从而授权给默认角色 AI助手。\"\n  }\n]\n```",
   "last_error": "",
-  "cycle": 0,
-  "status": "failed",
-  "develop_text": "我已经按照计划在项目根目录下创建了 `DEVELOPMENT.md` 文件，并将侦察兵整理的《Chat Bridge 项目开发说明书》完整内容写入了该文件。\n\n**修改的文件**：\n- `DEVELOPMENT.md` (新建)\n\n**所做的工作**：\n- 将包含项目架构概述、Agent 开发指南、Tool 开发指南、提示词与输出规范、记忆与上下文注入以及运行与调试等核心内容的开发说明书文档化，方便后续作为 Agent 开发和修改代码的参考。\n修改代码的参考。",
-  "search_rounds": 1,
+  "cycle": 3,
+  "status": "idle",
+  "develop_text": "",
+  "search_rounds": 0,
   "resume_at": ""
 }

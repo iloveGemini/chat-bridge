@@ -1,58 +1,85 @@
 # -*- coding: utf-8 -*-
 """
-Coding Agent 的核心调度器 (Orchestrator) —— 5 阶段状态机。
+Coding Agent 的核心调度器 —— planner 即「项目经理」的动态调度循环。
 
-流程：Plan -> Search -> Code -> Write -> Check
-- Plan(planner)   : 不写代码，只拆解任务/提问/规划。需求不清时推确认卡并暂停等用户。
-- Search(searcher): 只读侦察兵，按规划找回精准上下文。
-- Code(coder)     : 高级开发，只产出结构化修改意图(Diffs)，不碰文件。
-- Write(writer)   : 打字员，把 Diffs 精确落地为 apply_file_edits / replace_in_file 调用。
-- Check(checker)  : QA，跑测试/校验。Pass -> 任务完成；Fail -> 把报错回喂给 Planner 进入下一轮。
+不再是写死的线性流水线，而是一个主管(supervisor)模式：
+  planner 是项目经理，自己不读不写不跑，只统筹。它每一轮看当前进展，决定
+  「现在派谁去干什么」——通过 dispatch 工具调度子 agent：
+    - searcher  : 只读侦察/查代码（worker_api，便宜快）
+    - developer : 改代码（读+写，主模型）
+    - checker   : 跑测试/验证（主模型）
+  直到它判断完成 -> finish(进「待确认」闸门)，或需要用户拍板 -> ask_user_clarification。
 
-设计要点：
-- 工具是全局共享资源池(tools/registry)，按角色 RBAC 分配(get_tools)。
-- 提示词从 agents/coding/prompts/*.md 解耦加载(ROLE_PROMPTS)。
-- 复用 agent.py 里已经过实战的基础设施：LLM 调用、沙箱上下文、落库、取消/队列。
-  Coding Agent 在此被「降级」为生态中的一个子系统，agent.py 退化为底层能力库。
+代码退化成很薄的执行器：调 planner -> 跑它派的活 -> 结果回喂 -> 再调 planner。
+当前为「串行」执行（一次跑一个），并发以后再加。
 """
 import json
 
 import runtime.coding_runtime as agent
 from agents.coding.state import CodingState
-from agents.coding.roles import ROLE_PROMPTS
-from tools.registry import get_tools, execute_tool
-from agents.engine import run_tool_loop
-from agents.coding import phase as _phase  # noqa: F401  (导入即注册 5 个相位叶子)
+from agents.coding import phase as _phase  # noqa: F401  (导入即注册各相位叶子)
 from agents.base import AgentContext, AgentResult, get_agent
 from agents.manager import BaseManager
+from tools.registry import _REGISTRY
 
-# coder/writer 已合并为 develop(开发者)：一个角色既想清楚怎么改、又直接落地修改。
-PHASE_TO_ROLE = {
-    "plan": "planner",
-    "search": "searcher",
-    "develop": "developer",
-    "check": "checker",
-}
-PHASE_SEQUENCE = ["plan", "search", "develop", "check"]
+# 可被项目经理调度的子 agent，及其逻辑端点 / 工具轮数上限
+DISPATCHABLE = ("searcher", "developer", "checker")
+WORKER_ENDPOINT = {"searcher": "worker_api", "developer": "api", "checker": "api"}
+WORKER_MAX_ROUNDS = {"searcher": 14, "developer": 12, "checker": 8}
+MAX_MANAGER_ROUNDS = 16  # 项目经理最多调度多少轮，封顶防失控
 
-# 每个相位用哪个逻辑端点：searcher 是只读侦察的体力活，交给便宜高 RPM 的 worker_api；
-# planner/developer/checker 是脑力活，留给主模型 api。
-# worker_api 未配置时 _resolve_api 会自动回落到 summary_api / api，安全。
-PHASE_ENDPOINT = {
-    "plan": "api",
-    "search": "worker_api",
-    "develop": "api",
-    "check": "api",
-}
 
-PHASE_MAX_ROUNDS = {
-    "plan": 6,
-    "search": 14,
-    "develop": 12,
-    "check": 8,
-}
-MAX_CYCLES = 3
-MAX_SEARCH_ROUNDS = 2  # 一轮规划里 planner↔searcher 最多来回几次，封顶防转圈
+def _dispatch_tool():
+    return {
+        "type": "function",
+        "function": {
+            "name": "dispatch",
+            "description": (
+                "派一个子 agent 去干一件具体的事并拿回结果。你是项目经理，自己不读文件、"
+                "不写代码、不跑命令，只能通过它调度。一次只派一个。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "agent": {
+                        "type": "string",
+                        "enum": list(DISPATCHABLE),
+                        "description": "searcher=只读侦察/查代码; developer=改代码(读+写); checker=跑测试/验证",
+                    },
+                    "instruction": {
+                        "type": "string",
+                        "description": "交给该 agent 的明确任务(查什么/改什么/验证什么)，尽量自包含。",
+                    },
+                },
+                "required": ["agent", "instruction"],
+            },
+        },
+    }
+
+
+def _finish_tool():
+    return {
+        "type": "function",
+        "function": {
+            "name": "finish",
+            "description": "任务已完成（通常在 checker 验证通过后）。提交改动小结，转交用户确认。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary": {"type": "string", "description": "做了哪些改动的小结"}
+                },
+                "required": ["summary"],
+            },
+        },
+    }
+
+
+def _manager_tools():
+    tools = [_dispatch_tool(), _finish_tool()]
+    clar = _REGISTRY.get("ask_user_clarification")
+    if clar:
+        tools.append(clar["schema"])
+    return tools
 
 
 class CodingOrchestrator(BaseManager):
@@ -65,26 +92,20 @@ class CodingOrchestrator(BaseManager):
         self.task = None
         self.ctx = None
         self._on_event = None
-        self._custom_chat = chat_fn  # 测试可注入；为 None 时按相位选逻辑端点
+        self._custom_chat = chat_fn  # 测试可注入；为 None 时按角色选逻辑端点
 
     def _chat_for(self, endpoint):
-        """返回一个绑定到指定逻辑端点(api/worker_api/...)的 chat_fn。
-        searcher/writer 走便宜高 RPM 的 worker_api，省钱也省主模型额度。"""
+        """返回绑定到某逻辑端点(api/worker_api)的 chat_fn，并记录 last_prompt。"""
         custom = self._custom_chat
 
         def _fn(messages, tools):
-            # 记录最近一次 payload，供前端「Last Prompt」调试按钮查看（两条路径统一）。
             try:
-                agent.set_last_prompt(
-                    self.task_id, messages, phase=self.state.get("phase")
-                )
+                agent.set_last_prompt(self.task_id, messages, phase=self.state.get("phase"))
             except Exception:
                 pass
             if custom:
                 return custom(messages, tools)
-            return agent._chat(
-                endpoint, messages, tools=tools or None, temperature=0.3
-            )
+            return agent._chat(endpoint, messages, tools=tools or None, temperature=0.3)
 
         return _fn
 
@@ -102,22 +123,20 @@ class CodingOrchestrator(BaseManager):
             return ""
 
     def _ask_before_acting(self):
-        """全局模式开关：开启时，计划就绪后先暂停让用户批准，才进入开发动文件。"""
+        """全局模式开关：开启时，派 developer 动文件前先暂停让用户批准。"""
         try:
             return bool((agent.load_config().get("coding", {}) or {}).get("ask_before_acting", False))
         except Exception:
             return False
 
     def _recap(self, user_msg):
-        """返工/续跑时的「前情提要」：上一版计划 + 最近若干条对话，
-        拼给规划者，让它承接已知需求、不再从零重问。首轮无历史则返回空。"""
+        """续跑/返工的前情提要：最近若干条对话，让经理承接已知进展、不从零重问。"""
         try:
             turns = agent.get_turns(self.task_id) or []
         except Exception:
             turns = []
         texts = [t for t in turns
                  if t.get("type") == "text" and t.get("role") in ("user", "assistant")]
-        # 去掉刚加进去的这条当前用户消息（base 里已含）
         if texts and texts[-1].get("role") == "user" and (texts[-1].get("content") or "").strip() == (user_msg or "").strip():
             texts = texts[:-1]
         if not texts:
@@ -129,141 +148,53 @@ class CodingOrchestrator(BaseManager):
             if len(c) > 280:
                 c = c[:280] + "…"
             lines.append(f"[{who}] {c}")
-        prior_plan = (self.state.get("plan_text", "") or "").strip()
-        recap = ""
-        if prior_plan:
-            recap += "（上一版计划）\n" + prior_plan[:1200] + "\n\n"
-        recap += "（最近对话）\n" + "\n".join(lines)
-        return recap
+        return "（最近对话）\n" + "\n".join(lines)
 
-    def _build_handoff(self, phase, user_msg, shared):
-        d = shared
-        goal = (self.task or {}).get("goal") or ""
-        base = f"【原始需求】\n{user_msg or goal or '(沿用既有任务目标)'}"
-        if phase == "plan":
-            out = base
-            recap = self._recap(user_msg)
-            if recap:
-                out += (
-                    "\n\n【前情提要（这是续跑/返工，下面是已做过的计划与最近对话；"
-                    "已知的需求别再重新问用户，直接在此基础上承接）】\n" + recap
-                )
-            if d.get("search_text"):
-                out += (
-                    "\n\n【侦察兵带回的资料（据此把粗计划细化为可执行计划；"
-                    "若还缺关键信息，再打 [NEED_SEARCH] 并写清要查什么；"
-                    "信息够了就直接给最终计划、不要打标记 → 进入开发）】\n" + d["search_text"]
-                )
-            if d.get("last_error"):
-                out += (
-                    "\n\n【上一轮验证失败的报错（请据此修正计划）】\n"
-                    + d["last_error"]
-                )
-            return out
-        if phase == "search":
-            return base + "\n\n【规划者给出的方案/搜索意图】\n" + (d.get("plan_text") or "")
-        if phase == "develop":
-            _plan = (d.get("plan_text") or "").replace("[NEED_SEARCH]", "").replace("[NEED_USER]", "")
-            return (
-                base
-                + "\n\n【规划】\n" + _plan
-                + "\n\n【侦察兵找回的上下文】\n" + (d.get("search_text") or "（本次未做额外侦察，规划已含所需信息）")
-                + "\n\n请按需读必要文件确认位置，然后**真正调用工具**"
-                "(apply_file_edits / replace_in_file / batch_write_files)把改动落地，"
-                "不要只输出 Diffs 文字。改完用一两句话简述改了哪些文件、做了什么。"
+    # ---------------- 子 agent 执行（串行） ----------------
+    def _worker_handoff(self, agent_name, instruction, progress_text):
+        req = (self.state.get("user_request", "") or (self.task or {}).get("goal", "") or "").strip()
+        head = f"【总目标】\n{req}\n\n【你这次的任务】\n{instruction}"
+        if agent_name in ("developer", "checker") and progress_text:
+            head += (
+                "\n\n【已掌握的资料 / 已做的改动（直接用，不必重复侦察）】\n"
+                + progress_text[:9000]
             )
-        if phase == "check":
-            return (
-                base
-                + "\n\n代码改动已应用。请运行验证（优先 pytest / 项目测试，其次 node -c、最小运行）。"
-                "全部通过请在结尾单独输出标记 [CHECK_PASS]；"
-                "若有失败请在结尾输出 [CHECK_FAIL] 并附上关键报错日志。"
+        if agent_name == "developer":
+            head += (
+                "\n\n务必**真正调用工具**(apply_file_edits/replace_in_file/batch_write_files)"
+                "把改动落地，不要只输出 Diffs。改完一两句话简述改了哪些文件、做了什么。"
             )
-        return base
+        if agent_name == "checker":
+            head += (
+                "\n\n请运行验证（优先 pytest / 项目测试，其次 node -c / 最小运行）。"
+                "全部通过在结尾单独输出 [CHECK_PASS]；失败输出 [CHECK_FAIL] 并附关键报错。"
+            )
+        return head
 
-    # ---------- FlowManager 钩子：相位流转（在 ctx.shared 上自治） ----------
-    def entry(self, ctx):
-        cyc = int(self.state.get("cycle", 0) or 0)
-        ctx.shared["cycle"] = cyc
-        if cyc >= MAX_CYCLES:
-            ctx.shared["_exhausted"] = True
-            return None
-        self._emit("cycle", {"cycle": cyc})
-        return PHASE_SEQUENCE[0]
-
-    def advance(self, ctx, last_step, last_result=None):
-        if last_step == "plan":
-            # 简单任务：planner 直接给计划 → develop 自己读自己改。
-            # 复杂任务：planner 打 [NEED_SEARCH] → 派 searcher 找资料（封顶 MAX_SEARCH_ROUNDS 轮）。
-            plan_text = ctx.shared.get("plan_text", "") or ""
-            sr = int(ctx.shared.get("search_rounds", 0) or 0)
-            if "[NEED_SEARCH]" in plan_text and sr < MAX_SEARCH_ROUNDS:
-                ctx.shared["search_rounds"] = sr + 1
-                self.state.set("search_rounds", sr + 1)
-                return "search"
-            return "develop"
-        if last_step == "search":
-            return "plan"  # 侦察结果交回 planner 整合、再决定够不够（够了就不打标记→develop）
-        if last_step != "check":
-            return PHASE_SEQUENCE[PHASE_SEQUENCE.index(last_step) + 1]
-        if ctx.shared.get("_check_passed"):
-            return None  # check 通过：转「待确认」已在 _capture 置位
-        cyc = ctx.shared["cycle"] + 1
-        ctx.shared["cycle"] = cyc
-        self.state.set("cycle", cyc)
-        if cyc >= MAX_CYCLES:
-            ctx.shared["_exhausted"] = True
-            return None
-        ctx.shared["search_rounds"] = 0  # 新一轮 cycle，搜索预算重置
-        self.state.set("search_rounds", 0)
-        self._emit("cycle", {"cycle": cyc})
-        return PHASE_SEQUENCE[0]
-
-    def _capture(self, ctx, phase, text):
-        if phase == "plan":
-            ctx.shared["plan_text"] = text; self.state.set("plan_text", text)
-        elif phase == "search":
-            ctx.shared["search_text"] = text; self.state.set("search_text", text)
-        elif phase == "develop":
-            ctx.shared["develop_text"] = text; self.state.set("develop_text", text)
-        elif phase == "check":
-            passed = ("[CHECK_PASS]" in text) and ("[CHECK_FAIL]" not in text)
-            ctx.shared["_check_passed"] = passed
-            if passed:
-                # 校验只是静态/能起，不等于真满足需求 → 不自动完结，转「待用户确认」。
-                ctx.shared["await_confirm"] = True
-                ctx.shared["final_text"] = text
-            else:
-                ctx.shared["last_error"] = text or "(验证未通过且无明确报错)"
-                self.state.set("last_error", ctx.shared["last_error"])
-
-    def _run_phase(self, phase, handoff):
-        # 路由到该相位的注册叶子节点；运行时依赖与 handoff 经 ctx.shared 交接，
-        # 叶子把正文写回 ctx.shared['{role}_text']。返回结构与原实现逐字节一致。
-        role = PHASE_TO_ROLE[phase]
+    def _run_worker(self, agent_name, instruction, progress_text):
+        """跑一个被派的子 agent，返回 {'text':..,'cancelled':bool}。复用相位叶子。"""
+        leaf = get_agent(f"coding.{agent_name}")
+        if not leaf:
+            return {"text": f"(未知 agent: {agent_name})", "cancelled": False}
         ctx = AgentContext(
-            task_id=self.task_id,
-            on_event=self._on_event,
+            task_id=self.task_id, on_event=self._on_event,
             shared={
-                "chat_fn": self._chat_for(PHASE_ENDPOINT.get(phase, "api")),
+                "chat_fn": self._chat_for(WORKER_ENDPOINT.get(agent_name, "api")),
                 "tool_ctx": self.ctx,
                 "workspace_tree": self._workspace_tree(),
                 "is_cancelled": lambda: agent._check_cancel(self.task_id),
-                "handoff": handoff,
-                "max_rounds": PHASE_MAX_ROUNDS.get(phase, 6),
+                "handoff": self._worker_handoff(agent_name, instruction, progress_text),
+                "max_rounds": WORKER_MAX_ROUNDS.get(agent_name, 8),
             },
         )
-        leaf = get_agent(f"coding.{role}")
         ar = leaf.run(ctx)
-        text = ctx.shared.get(f"{role}_text", "")
-        if ar.next_hint == "cancelled":
-            return {"cancelled": True, "text": ""}
-        if ar.next_hint == "clarify":
-            return {"clarify": True, "clarify_payload": ctx.shared.get("clarify_payload"), "text": text}
-        return {"text": text}
+        return {
+            "text": ctx.shared.get(f"{agent_name}_text", "") or "",
+            "cancelled": getattr(ar, "next_hint", None) == "cancelled",
+        }
 
+    # ---------------- 统一节点接口 ----------------
     def run(self, ctx: AgentContext) -> AgentResult:
-        """统一节点接口：把 AgentContext 适配到 run_turn —— coding 作为组合 Manager 节点被上层路由。"""
         res = self.run_turn(
             ctx.user_msg,
             {"task": (ctx.shared or {}).get("task"), "on_event": ctx.on_event},
@@ -271,6 +202,7 @@ class CodingOrchestrator(BaseManager):
         status = "done" if res.get("done") else "need_user"
         return AgentResult(status=status, output=res.get("final_text"))
 
+    # ---------------- 主管调度循环 ----------------
     def run_turn(self, user_msg, context):
         context = context or {}
         self.task = context.get("task") or agent.get_task(self.task_id)
@@ -287,20 +219,13 @@ class CodingOrchestrator(BaseManager):
 
         try:
             agent.update_task(self.task_id, status="运行中")
-            self.state.update(status="running", last_error="")
+            self.state.update(status="running")
+            self.state.set_phase("manage")
             if user_msg:
                 agent.add_turn(self.task_id, "user", "text", user_msg)
+                self.state.set("user_request", user_msg)
+                self.state.set("plan_approved", False)  # 新需求/返工 → 重新需要批准
                 self._emit("user", user_msg)
-
-            self.state.set_phase("plan")
-
-            ctx = AgentContext(
-                task_id=self.task_id, user_msg=user_msg,
-                on_event=self._on_event, shared={},
-            )
-            # 从持久化状态播种 ctx.shared（断点续跑时承接上轮上下文）
-            for _k in ("plan_text", "search_text", "develop_text", "diffs_text", "last_error"):
-                ctx.shared[_k] = self.state.get(_k, "") or ""
 
             final_text = ""
             done = False
@@ -309,74 +234,120 @@ class CodingOrchestrator(BaseManager):
             await_confirm = False
             await_plan_approval = False
 
-            # Ask Before Acting：用户批准计划后，从 develop 续跑（跳过重新规划），
-            # 承接已存的 plan_text/search_text。
-            resume_at = self.state.get("resume_at") or ""
-            if resume_at:
-                self.state.set("resume_at", "")
-                ctx.shared["plan_approved"] = True
-                step = resume_at
-            else:
-                step = self.entry(ctx)
-            while step is not None:
+            # 经理上下文：原始需求 + 前情提要
+            req = (self.state.get("user_request", "") or user_msg
+                   or (self.task or {}).get("goal", "") or "(沿用既有任务目标)")
+            sys_prompt = _phase.load_role_prompt("planner")
+            tree = self._workspace_tree()
+            sys_full = (
+                sys_prompt
+                + "\n\n【环境】沙箱为 Windows，所有路径相对工作区根目录。"
+                + (f"\n\n【工作区文件树】\n{tree}" if tree else "")
+            )
+            user0 = f"【原始需求】\n{req}"
+            recap = self._recap(user_msg)
+            if recap:
+                user0 += "\n\n【前情提要（续跑/返工，承接已知进展，别重新问已知需求）】\n" + recap
+            messages = [
+                {"role": "system", "content": sys_full},
+                {"role": "user", "content": user0},
+            ]
+
+            tools = _manager_tools()
+            manager_chat = self._chat_for("api")
+            approved = bool(self.state.get("plan_approved"))
+            progress = []  # 各子 agent 的产出，喂给后续 worker
+
+            for _round in range(MAX_MANAGER_ROUNDS):
                 if agent._check_cancel(self.task_id):
                     interrupted = True
                     break
                 injected = agent._drain_queue(self.task_id)
-
-                self.state.set_phase(step)
-                self._emit("phase", {"phase": step, "role": PHASE_TO_ROLE[step]})
-
-                handoff = self._build_handoff(step, user_msg, ctx.shared)
                 if injected:
-                    handoff += "\n\n【用户追加/修改需求，请纳入考虑】\n" + "\n".join(injected)
+                    messages.append({
+                        "role": "user",
+                        "content": "【用户追加/修改需求，请纳入考虑】\n" + "\n".join(injected),
+                    })
 
-                res = self._run_phase(step, handoff)
+                res = manager_chat(messages, tools)
+                choice = (res.get("choices") or [{}])[0].get("message", {}) or {}
+                content = (choice.get("content") or "").strip()
+                tcs = choice.get("tool_calls") or []
 
-                if res.get("cancelled"):
-                    interrupted = True
-                    break
-                if res.get("clarify"):
+                if content:
+                    agent.add_turn(self.task_id, "assistant", "text", f"[planner] {content}")
+                    self._emit("assistant", f"[planner] {content}")
+
+                if not tcs:
+                    # 经理只说话没派活 → 多半在征求意见 / 需要你拍板
                     waiting_user = True
-                    final_text = "（已推送需求确认卡，等待你的选择/补充。）"
+                    final_text = content or "（需要你的进一步指示。）"
                     break
 
-                self._capture(ctx, step, res.get("text", "") or "")
+                messages.append({"role": "assistant", "content": choice.get("content") or "", "tool_calls": tcs})
 
-                # 规划者还在收集需求/向用户提问（纯文字、没推确认卡）时，
-                # 它会在结尾打 [NEED_USER] 标记 -> 暂停等用户，别空跑后面 4 个相位。
-                if step == "plan":
-                    _pt = ctx.shared.get("plan_text", "") or ""
-                    if "[NEED_USER]" in _pt:
+                stop = False
+                for tc in tcs:
+                    fn = tc.get("function", {}) or {}
+                    name = fn.get("name", "")
+                    try:
+                        args = json.loads(fn.get("arguments") or "{}")
+                    except Exception:
+                        args = {}
+
+                    if name == "ask_user_clarification":
+                        agent.add_turn(self.task_id, "assistant", "clarification_card",
+                                       json.dumps(args, ensure_ascii=False), tool_name=name)
+                        self._emit("clarification", args)
                         waiting_user = True
-                        final_text = (
-                            _pt.replace("[NEED_USER]", "").strip()
-                            or "（规划者需要你补充需求后再继续。）"
-                        )
-                        break
-                    # Ask Before Acting：计划就绪、即将进开发(不再侦察)时，先给用户看、等批准。
-                    _sr = int(ctx.shared.get("search_rounds", 0) or 0)
-                    _going_search = ("[NEED_SEARCH]" in _pt) and _sr < MAX_SEARCH_ROUNDS
-                    if (not _going_search and self._ask_before_acting()
-                            and not ctx.shared.get("plan_approved")):
-                        await_plan_approval = True
-                        final_text = (
-                            _pt.replace("[NEED_SEARCH]", "").replace("[NEED_USER]", "").strip()
-                            or "（已生成计划，待你批准后执行。）"
-                        )
+                        final_text = "（已推送需求确认卡，等待你的选择/补充。）"
+                        stop = True
                         break
 
-                step = self.advance(ctx, step)
+                    if name == "finish":
+                        await_confirm = True
+                        final_text = (args.get("summary") or "").strip() or "改动已完成，待你确认。"
+                        stop = True
+                        break
 
-            if not (interrupted or waiting_user or await_plan_approval):
-                if ctx.shared.get("await_confirm"):
-                    # 验证通过 → 待用户确认，不自动完结
-                    await_confirm = True
-                    final_text = ctx.shared.get("final_text", "") or "改动已完成，待你确认。"
-                elif ctx.shared.get("_exhausted"):
-                    final_text = "（已达最大循环次数，验证仍未通过，暂停等待你的指示。）"
-                else:
-                    final_text = final_text or "（流水线已跑完一轮，请查看进度并指示下一步。）"
+                    if name == "dispatch":
+                        agent_name = args.get("agent", "")
+                        instruction = (args.get("instruction") or "").strip()
+                        if agent_name not in DISPATCHABLE:
+                            messages.append({"role": "tool", "tool_call_id": tc.get("id"),
+                                             "content": f"未知 agent：{agent_name}，可选 {list(DISPATCHABLE)}"})
+                            continue
+                        # Ask Before Acting：派 developer 动文件前先等批准
+                        if agent_name == "developer" and self._ask_before_acting() and not approved:
+                            await_plan_approval = True
+                            final_text = ((content + "\n\n") if content else "") + \
+                                f"即将派 developer 执行：\n{instruction}"
+                            stop = True
+                            break
+
+                        agent.add_turn(self.task_id, "system", "text",
+                                       f"🧭 派单 → {agent_name}：{instruction[:160]}")
+                        self._emit("dispatch", {"agent": agent_name, "instruction": instruction})
+                        wr = self._run_worker(agent_name, instruction, "\n\n".join(progress))
+                        if wr.get("cancelled"):
+                            interrupted = True
+                            stop = True
+                            break
+                        result_text = wr.get("text", "") or "(无输出)"
+                        progress.append(f"[{agent_name}] {result_text}")
+                        messages.append({"role": "tool", "tool_call_id": tc.get("id"),
+                                         "content": result_text[:8000]})
+                        continue
+
+                    # 未知工具
+                    messages.append({"role": "tool", "tool_call_id": tc.get("id"),
+                                     "content": f"未知工具：{name}"})
+
+                if stop:
+                    break
+            else:
+                # 用满轮数仍没 finish
+                final_text = final_text or "（已达最大调度轮数，暂停，请查看进度并指示下一步。）"
 
             if interrupted:
                 final_text = final_text or "（已被用户中断，已保存当前进度，可继续指示。）"
@@ -387,19 +358,13 @@ class CodingOrchestrator(BaseManager):
                 self._emit("assistant", final_text)
 
             if await_confirm:
-                # 推一张确认卡：用户点「确认完成」才真正完结，点「返工」则带反馈继续。
-                agent.add_turn(
-                    self.task_id, "assistant", "confirm_card",
-                    json.dumps({"summary": final_text}, ensure_ascii=False),
-                )
+                agent.add_turn(self.task_id, "assistant", "confirm_card",
+                               json.dumps({"summary": final_text}, ensure_ascii=False))
                 self._emit("await_confirm", {"summary": final_text})
 
             if await_plan_approval:
-                # Ask Before Acting：推一张计划批准卡，用户点「批准执行」才动文件。
-                agent.add_turn(
-                    self.task_id, "assistant", "plan_card",
-                    json.dumps({"plan": final_text}, ensure_ascii=False),
-                )
+                agent.add_turn(self.task_id, "assistant", "plan_card",
+                               json.dumps({"plan": final_text}, ensure_ascii=False))
                 self._emit("await_plan", {"plan": final_text})
 
             card = {}
@@ -422,11 +387,8 @@ class CodingOrchestrator(BaseManager):
                       else ("awaiting_confirm" if await_confirm
                             else ("waiting_user" if waiting_user else ("done" if done else "idle")))),
             )
-            if done:
-                self.state.set_phase("done")
             agent.update_task(
-                self.task_id,
-                status=status,
+                self.task_id, status=status,
                 progress=100 if done else (95 if await_confirm else (30 if await_plan_approval else int((card or {}).get("progress", 10) or 10))),
             )
             return {
@@ -440,11 +402,10 @@ class CodingOrchestrator(BaseManager):
             }
 
         except Exception as e:
-            # 优雅收尾：记一条系统错误、把任务置为失败，但**不再向线程顶层抛**，
-            # 免得线程崩出一大坨 traceback（如 LLM 端点读超时）。
             agent._log("Orchestrator 回合出错:", e)
             try:
-                agent.add_turn(self.task_id, "system", "text", f"⚠️ 系统错误：{e}（已停在此处，可直接再发消息续跑）")
+                agent.add_turn(self.task_id, "system", "text",
+                               f"⚠️ 系统错误：{e}（已停在此处，可直接再发消息续跑）")
             except Exception:
                 pass
             try:
@@ -453,8 +414,7 @@ class CodingOrchestrator(BaseManager):
             except Exception:
                 pass
             return {
-                "final_text": f"系统错误：{e}",
-                "phase": self.state.get("phase"),
+                "final_text": f"系统错误：{e}", "phase": self.state.get("phase"),
                 "done": False, "waiting_user": False,
                 "await_confirm": False, "interrupted": True, "checkpoint": {},
             }
