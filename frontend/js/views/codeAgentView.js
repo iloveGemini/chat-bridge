@@ -62,6 +62,18 @@ class CodeAgentView {
       settingsBtn.addEventListener("click", () => this.dumpLastPrompt());
     }
 
+    // 执行模式开关（全局）：⚡直接干 / 🛑先批准
+    if (settingsBtn && !document.getElementById("ca-mode-btn")) {
+      this.modeBtn = document.createElement("button");
+      this.modeBtn.id = "ca-mode-btn";
+      this.modeBtn.style.cssText =
+        "background:transparent;border:1px solid #555;color:#aaa;border-radius:5px;padding:2px 8px;cursor:pointer;font-size:11px;margin-right:6px;white-space:nowrap;";
+      this.modeBtn.textContent = "模式…";
+      settingsBtn.parentNode.insertBefore(this.modeBtn, settingsBtn);
+      this.modeBtn.addEventListener("click", () => this.toggleMode());
+      this.loadMode();
+    }
+
     e.input.addEventListener("input", () => {
       e.input.style.height = "auto";
       e.input.style.height = Math.min(e.input.scrollHeight, 120) + "px";
@@ -190,6 +202,42 @@ class CodeAgentView {
         e.input.focus();
         showToast("写下要返工/修改的点，发送即可继续（上下文不丢）");
       }
+
+      // 「批准执行」：从 develop 续跑，开始动文件
+      if (ev.target.classList.contains("ca-approve-plan-btn")) {
+        ev.target.disabled = true;
+        ev.target.textContent = "执行中...";
+        this.generating = true;
+        this._refreshSendBtn();
+        api
+          .agentApprovePlan(this.currentTaskId)
+          .then((r) => {
+            if (r && r.ok) {
+              showToast("已批准，开始执行");
+              this.startPolling();
+              this.poll();
+            } else {
+              showToast((r && r.error) || "批准失败");
+              this.generating = false;
+              this._refreshSendBtn();
+              ev.target.disabled = false;
+              ev.target.textContent = "批准执行";
+            }
+          })
+          .catch(() => {
+            showToast("批准失败");
+            this.generating = false;
+            this._refreshSendBtn();
+            ev.target.disabled = false;
+            ev.target.textContent = "批准执行";
+          });
+      }
+
+      // 「修改需求」：光标回输入框，让用户改完重新规划
+      if (ev.target.classList.contains("ca-plan-edit-btn")) {
+        e.input.focus();
+        showToast("写下要调整的点，发送后会重新规划");
+      }
     });
   }
 
@@ -315,6 +363,17 @@ class CodeAgentView {
 
     if (type === "reasoning") {
       this.messages.push({ role: "thinking", text: t.content, time: "" });
+      return;
+    }
+
+    if (type === "plan_card") {
+      let plan = "";
+      try {
+        plan = (JSON.parse(t.content) || {}).plan || "";
+      } catch (e) {
+        plan = t.content || "";
+      }
+      this.messages.push({ role: "plan", plan, pending: true });
       return;
     }
 
@@ -769,6 +828,48 @@ class CodeAgentView {
     }
   }
 
+  // 执行模式（全局）：Act Without Asking ⚡ / Ask Before Acting 🛑
+  async loadMode() {
+    try {
+      const r = await api.agentMode();
+      this._askBefore = !!(r && r.ask_before_acting);
+    } catch (e) {
+      this._askBefore = false;
+    }
+    this._renderModeBtn();
+  }
+
+  _renderModeBtn() {
+    if (!this.modeBtn) return;
+    if (this._askBefore) {
+      this.modeBtn.textContent = "🛑 先批准";
+      this.modeBtn.style.color = "#e0c14e";
+      this.modeBtn.style.borderColor = "#6b5e2e";
+      this.modeBtn.title = "Ask Before Acting：出了计划先等你批准，才动文件";
+    } else {
+      this.modeBtn.textContent = "⚡ 直接干";
+      this.modeBtn.style.color = "#4ec9b0";
+      this.modeBtn.style.borderColor = "#2e6b4f";
+      this.modeBtn.title = "Act Without Asking：直接执行（结尾仍会让你确认）";
+    }
+  }
+
+  async toggleMode() {
+    const next = !this._askBefore;
+    try {
+      const r = await api.agentSetMode(next);
+      if (r && r.ok) {
+        this._askBefore = !!r.ask_before_acting;
+        this._renderModeBtn();
+        showToast(this._askBefore ? "已切到：先批准计划再执行" : "已切到：直接执行");
+      } else {
+        showToast("切换失败");
+      }
+    } catch (e) {
+      showToast("切换失败");
+    }
+  }
+
   // 真中断：通知后端在下一个检查点停止循环；轮询会拉回“已中断”系统消息与“已挂起”状态。
   async interruptGeneration() {
     if (
@@ -830,6 +931,22 @@ class CodeAgentView {
           subsequentUserMessage.text.includes("【需求确认回复】");
 
         html += this._renderClarificationCard(m, isAnswered);
+      } else if (m.role === "plan") {
+        const idx = this.messages.indexOf(m);
+        const acted = this.messages
+          .slice(idx + 1)
+          .some((x) => x.role === "sys" && /已批准计划/.test(x.text || ""));
+        html += `
+          <div class="terminal-msg" style="background:#2a2616;border:1px solid #6b5e2e;border-radius:6px;padding:12px;margin:8px 0;">
+            <div style="color:#e0c14e;font-weight:bold;margin-bottom:8px;">📋 计划待批准（Ask Before Acting）</div>
+            <div style="white-space:pre-wrap;color:#eee;margin-bottom:10px;font-size:13px;">${escHtml(m.plan || "")}</div>
+            ${acted
+              ? `<div style="color:#4ec9b0;">已批准，执行中…</div>`
+              : `<div style="text-align:right;display:flex;gap:8px;justify-content:flex-end;">
+                   <button class="ca-plan-edit-btn" style="background:transparent;color:#e0a458;border:1px solid #e0a458;padding:6px 14px;border-radius:5px;cursor:pointer;">修改需求</button>
+                   <button class="ca-approve-plan-btn" style="background:#6b5e2e;color:#fff;border:none;padding:6px 14px;border-radius:5px;cursor:pointer;">批准执行</button>
+                 </div>`}
+          </div>`;
       } else if (m.role === "confirm") {
         // 检查这张确认卡之后是否已有「已确认完成」系统消息 → 已处理则不再显示按钮
         const idx = this.messages.indexOf(m);

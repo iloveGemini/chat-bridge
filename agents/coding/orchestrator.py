@@ -101,6 +101,13 @@ class CodingOrchestrator(BaseManager):
         except Exception:
             return ""
 
+    def _ask_before_acting(self):
+        """全局模式开关：开启时，计划就绪后先暂停让用户批准，才进入开发动文件。"""
+        try:
+            return bool((agent.load_config().get("coding", {}) or {}).get("ask_before_acting", False))
+        except Exception:
+            return False
+
     def _recap(self, user_msg):
         """返工/续跑时的「前情提要」：上一版计划 + 最近若干条对话，
         拼给规划者，让它承接已知需求、不再从零重问。首轮无历史则返回空。"""
@@ -300,8 +307,17 @@ class CodingOrchestrator(BaseManager):
             waiting_user = False
             interrupted = False
             await_confirm = False
+            await_plan_approval = False
 
-            step = self.entry(ctx)
+            # Ask Before Acting：用户批准计划后，从 develop 续跑（跳过重新规划），
+            # 承接已存的 plan_text/search_text。
+            resume_at = self.state.get("resume_at") or ""
+            if resume_at:
+                self.state.set("resume_at", "")
+                ctx.shared["plan_approved"] = True
+                step = resume_at
+            else:
+                step = self.entry(ctx)
             while step is not None:
                 if agent._check_cancel(self.task_id):
                     interrupted = True
@@ -338,10 +354,21 @@ class CodingOrchestrator(BaseManager):
                             or "（规划者需要你补充需求后再继续。）"
                         )
                         break
+                    # Ask Before Acting：计划就绪、即将进开发(不再侦察)时，先给用户看、等批准。
+                    _sr = int(ctx.shared.get("search_rounds", 0) or 0)
+                    _going_search = ("[NEED_SEARCH]" in _pt) and _sr < MAX_SEARCH_ROUNDS
+                    if (not _going_search and self._ask_before_acting()
+                            and not ctx.shared.get("plan_approved")):
+                        await_plan_approval = True
+                        final_text = (
+                            _pt.replace("[NEED_SEARCH]", "").replace("[NEED_USER]", "").strip()
+                            or "（已生成计划，待你批准后执行。）"
+                        )
+                        break
 
                 step = self.advance(ctx, step)
 
-            if not (interrupted or waiting_user):
+            if not (interrupted or waiting_user or await_plan_approval):
                 if ctx.shared.get("await_confirm"):
                     # 验证通过 → 待用户确认，不自动完结
                     await_confirm = True
@@ -367,6 +394,14 @@ class CodingOrchestrator(BaseManager):
                 )
                 self._emit("await_confirm", {"summary": final_text})
 
+            if await_plan_approval:
+                # Ask Before Acting：推一张计划批准卡，用户点「批准执行」才动文件。
+                agent.add_turn(
+                    self.task_id, "assistant", "plan_card",
+                    json.dumps({"plan": final_text}, ensure_ascii=False),
+                )
+                self._emit("await_plan", {"plan": final_text})
+
             card = {}
             try:
                 card = agent.update_checkpoint(self.task, final_text or "")
@@ -376,21 +411,23 @@ class CodingOrchestrator(BaseManager):
 
             status = (
                 "已挂起" if interrupted
-                else ("待确认" if await_confirm
-                      else ("等待输入" if waiting_user else ("已完成" if done else "等待输入")))
+                else ("待批准" if await_plan_approval
+                      else ("待确认" if await_confirm
+                            else ("等待输入" if waiting_user else ("已完成" if done else "等待输入"))))
             )
             self.state.set(
                 "status",
                 "failed" if interrupted
-                else ("awaiting_confirm" if await_confirm
-                      else ("waiting_user" if waiting_user else ("done" if done else "idle"))),
+                else ("awaiting_plan" if await_plan_approval
+                      else ("awaiting_confirm" if await_confirm
+                            else ("waiting_user" if waiting_user else ("done" if done else "idle")))),
             )
             if done:
                 self.state.set_phase("done")
             agent.update_task(
                 self.task_id,
                 status=status,
-                progress=100 if done else (95 if await_confirm else int((card or {}).get("progress", 10) or 10)),
+                progress=100 if done else (95 if await_confirm else (30 if await_plan_approval else int((card or {}).get("progress", 10) or 10))),
             )
             return {
                 "final_text": final_text,

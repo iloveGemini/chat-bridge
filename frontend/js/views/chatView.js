@@ -259,11 +259,11 @@ class ChatView {
 
     if (on) {
       e.send.className = "send-btn generating-stop";
-      e.send.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>`;
+      e.send.innerHTML = `<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>`;
       e.send.title = "停止生成";
     } else {
       e.send.className = "send-btn";
-      e.send.innerHTML = `<svg viewBox="0 0 24 24" width="48" height="48" fill="currentColor"><path d="M12 2c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3zm-6.5 3c-1.38 0-2.5 1.12-2.5 2.5s1.12 2.5 2.5 2.5 2.5-1.12 2.5-2.5-1.12-2.5-2.5-2.5zm13 0c-1.38 0-2.5 1.12-2.5 2.5s1.12 2.5 2.5 2.5 2.5-1.12 2.5-2.5-1.12-2.5-2.5-2.5zM12 10c-3.5 0-6.5 2.5-7.5 6-.5 1.5.5 3 2 3h11c1.5 0 2.5-1.5 2-3-1-3.5-4-6-7.5-6z"></path></svg>`;
+      e.send.innerHTML = `<svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M12 2c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3zm-6.5 3c-1.38 0-2.5 1.12-2.5 2.5s1.12 2.5 2.5 2.5 2.5-1.12 2.5-2.5-1.12-2.5-2.5-2.5zm13 0c-1.38 0-2.5 1.12-2.5 2.5s1.12 2.5 2.5 2.5 2.5-1.12 2.5-2.5-1.12-2.5-2.5-2.5zM12 10c-3.5 0-6.5 2.5-7.5 6-.5 1.5.5 3 2 3h11c1.5 0 2.5-1.5 2-3-1-3.5-4-6-7.5-6z"></path></svg>`;
       e.send.title = "发送";
     }
   }

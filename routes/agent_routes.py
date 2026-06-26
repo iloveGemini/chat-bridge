@@ -4,7 +4,7 @@ import threading
 from pathlib import Path
 
 import runtime.coding_runtime as agent
-from core.config import config, config_lock
+from core.config import config, config_lock, save_config as _save_config
 from agents.manager import run_coding
 from routes.registry import post, get
 
@@ -89,6 +89,46 @@ def _confirm(h, query, session, session_id):
         return
     agent.add_turn(tid, "system", "text", "✅ 用户已确认完成，工单关闭")
     agent.update_task(tid, status="已完成", progress=100)
+    h._json({"ok": True})
+
+
+@get("/api/agent/mode")
+def _get_mode(h, query, session, session_id):
+    with config_lock:
+        v = bool((config.get("coding", {}) or {}).get("ask_before_acting", False))
+    h._json({"ok": True, "ask_before_acting": v})
+
+
+@post("/api/agent/mode")
+def _set_mode(h, query, session, session_id):
+    """切换执行模式：Ask Before Acting(计划先批准) / Act Without Asking(直接干)。全局开关。"""
+    data = h._read_json()
+    v = bool(data.get("ask_before_acting"))
+    with config_lock:
+        config.setdefault("coding", {})["ask_before_acting"] = v
+    _save_config()
+    h._json({"ok": True, "ask_before_acting": v})
+
+
+@post("/api/agent/approve_plan")
+def _approve_plan(h, query, session, session_id):
+    """Ask Before Acting：用户批准计划 → 从 develop 续跑（不重新规划）。"""
+    data = h._read_json()
+    tid = data.get("task_id")
+    if not tid:
+        h._json({"ok": False, "error": "task_id 必填"})
+        return
+    if agent.is_running(tid):
+        h._json({"ok": False, "error": "任务运行中"})
+        return
+    task = agent.get_task(tid)
+    if not task:
+        h._json({"ok": False, "error": "任务不存在"})
+        return
+    from agents.coding.state import CodingState
+    CodingState(task["workspace"]).set("resume_at", "develop")
+    agent.add_turn(tid, "system", "text", "▶️ 已批准计划，开始执行")
+    threading.Thread(target=run_coding, args=(tid, ""), daemon=True).start()
     h._json({"ok": True})
 
 
