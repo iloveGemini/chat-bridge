@@ -22,7 +22,9 @@ from agents.coding.state import CodingState
 from agents.coding.roles import ROLE_PROMPTS
 from tools.registry import get_tools, execute_tool
 from agents.engine import run_tool_loop
-from agents.coding.phase import run_phase
+from agents.coding import phase as _phase  # noqa: F401  (导入即注册 5 个相位叶子)
+from agents.base import AgentContext, AgentResult, get_agent
+from agents.manager import BaseManager
 
 PHASE_TO_ROLE = {
     "plan": "planner",
@@ -43,7 +45,9 @@ PHASE_MAX_ROUNDS = {
 MAX_CYCLES = 3
 
 
-class CodingOrchestrator:
+class CodingOrchestrator(BaseManager):
+    agent_type = "coding"
+
     def __init__(self, task_id, workspace_dir, chat_fn=None):
         self.task_id = task_id
         self.workspace_dir = workspace_dir
@@ -105,17 +109,38 @@ class CodingOrchestrator:
         return base
 
     def _run_phase(self, phase, handoff):
+        # 路由到该相位的注册叶子节点；运行时依赖与 handoff 经 ctx.shared 交接，
+        # 叶子把正文写回 ctx.shared['{role}_text']。返回结构与原实现逐字节一致。
         role = PHASE_TO_ROLE[phase]
-        return run_phase(
-            role, handoff,
-            chat_fn=self._chat_fn,
-            tool_ctx=self.ctx,
+        ctx = AgentContext(
             task_id=self.task_id,
-            emit=self._on_event,
-            workspace_tree=self._workspace_tree(),
-            is_cancelled=lambda: agent._check_cancel(self.task_id),
-            max_rounds=PHASE_MAX_ROUNDS.get(phase, 6),
+            on_event=self._on_event,
+            shared={
+                "chat_fn": self._chat_fn,
+                "tool_ctx": self.ctx,
+                "workspace_tree": self._workspace_tree(),
+                "is_cancelled": lambda: agent._check_cancel(self.task_id),
+                "handoff": handoff,
+                "max_rounds": PHASE_MAX_ROUNDS.get(phase, 6),
+            },
         )
+        leaf = get_agent(f"coding.{role}")
+        ar = leaf.run(ctx)
+        text = ctx.shared.get(f"{role}_text", "")
+        if ar.next_hint == "cancelled":
+            return {"cancelled": True, "text": ""}
+        if ar.next_hint == "clarify":
+            return {"clarify": True, "clarify_payload": ctx.shared.get("clarify_payload"), "text": text}
+        return {"text": text}
+
+    def run(self, ctx: AgentContext) -> AgentResult:
+        """统一节点接口：把 AgentContext 适配到 run_turn —— coding 作为组合 Manager 节点被上层路由。"""
+        res = self.run_turn(
+            ctx.user_msg,
+            {"task": (ctx.shared or {}).get("task"), "on_event": ctx.on_event},
+        )
+        status = "done" if res.get("done") else "need_user"
+        return AgentResult(status=status, output=res.get("final_text"))
 
     def run_turn(self, user_msg, context):
         context = context or {}
