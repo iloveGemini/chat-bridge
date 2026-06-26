@@ -10,12 +10,9 @@ class CodingAgent(BaseAgent):
     agent_type = "coding"
 
     def default_tool_grant(self) -> list:
-        # coding 是多角色 agent：授权在 orchestrator 内按相位/角色分配(get_tools(role))。
-        # 这里给出 agent 级【并集】，仅供 §4 统一 RBAC 时参考，不替代逐角色授权。
-        names = set()
-        for role in _CODING_ROLES:
-            names.update(ROLE_PERMISSIONS.get(role, []))
-        return sorted(names)
+        # agent 级能力组授权 = ["coding"]；agent 内逐角色(planner/searcher/...)的细粒度
+        # RBAC 仍由 orchestrator 的 get_tools(role) 负责，与组级授权正交。
+        return ["coding"]
 
     def run(self, ctx: AgentContext) -> AgentResult:
         from agents.coding.orchestrator import run_coding_task  # 延迟导入

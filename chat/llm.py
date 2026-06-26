@@ -16,9 +16,10 @@ from memory.memory import (
 )
 from chat.envelope import ingest_reply
 from chat.scene import _scene_stamp
-from chat.outreach import _outreach_enabled, _outreach_tool_defs, _exec_outreach_tool
+from chat.outreach import _exec_outreach_tool
 from session.session import get_session
-from session.tools import get_session_tools
+from session.tools import get_session_tools, SESSION_TOOL_KEYS
+from tools.registry import resolve_tools
 import tooling
 import memory_store
 
@@ -128,19 +129,13 @@ def call_llm_api(session_id):
     log_print(f"   └─ User  : {last_u_preview}...")
 
     tools_cfg = get_session_tools(session_id)
-    session_tools = []
-    if tools_cfg.get("outreach") and _outreach_enabled():
-        session_tools += _outreach_tool_defs()
-    if tools_cfg.get("coding"):
-        session_tools += tooling.get_coding_tools()
+    # §4 统一授权：RP 允许 SESSION_TOOL_KEYS 全部能力组，按会话 toggle 解析出工具集。
+    session_tools = resolve_tools(SESSION_TOOL_KEYS, tools_cfg)
     if session_tools:
         payload["tools"] = session_tools
         payload["tool_choice"] = "auto"
-        log_print(
-            f"🔑 [工具授权][{session_id}] 本会话挂载: "
-            f"{'主动联系 ' if (tools_cfg.get('outreach') and _outreach_enabled()) else ''}"
-            f"{'本地项目操控' if tools_cfg.get('coding') else ''}".strip()
-        )
+        _on = ", ".join(g for g in SESSION_TOOL_KEYS if tools_cfg.get(g))
+        log_print(f"🔑 [工具授权][{session_id}] 本会话挂载 {len(session_tools)} 工具 (组: {_on})")
 
     def _post(pl):
         global API_REQUEST_TIMESTAMPS

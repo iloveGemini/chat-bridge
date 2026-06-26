@@ -159,6 +159,15 @@ Injectable = {
   统一成一个模型：**agent_type → 默认授权集，用户对 agent 实例做覆盖**。
 - 工具实现保持纯函数 + schema（`get_schema`/`execute`），与 agent 解耦。
 
+### 实现现状（已落地）
+- **能力组模型**：`tools/registry.TOOL_GROUPS = {outreach, coding, web}`（与 `SESSION_TOOL_KEYS` 对齐，
+  惰性 provider 避免导入环）+ `resolve_tools(allowed_groups, enabled_toggles)`。
+- **两层统一**：agent 按【能力组】授权（`BaseAgent.default_tool_grant` 返回组名：coding→`["coding"]`，
+  rp→全部）；会话级 `tools.json` toggle 是【实例覆盖】（逐组开关）；最终工具 = 允许组 ∩ 启用组。
+- **正交保留**：coding 的逐角色 RBAC（`ROLE_PERMISSIONS`/`get_tools(role)`）是 agent 内更细一层，不动。
+- **数据化**：RP 的 `call_llm_api` 原硬编码 if 链 → `resolve_tools(SESSION_TOOL_KEYS, tools_cfg)`，全组合行为等价。
+- **未做**：web 组工具本体；前端按 agent 自定义授权的 UI（等前端改版）。
+
 ---
 
 ## 5. Agent 生态与 Manager
