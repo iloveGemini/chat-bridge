@@ -347,7 +347,7 @@ def get_coding_tools():
             "type": "function",
             "function": {
                 "name": "smart_file_insight",
-                "description": "在文件里找东西的首选工具：一次拿到总行数 + 多个关键词/正则的全部命中(带行号，可带前后 context 上下文，可 offset 翻页)。等价于一次跑完 wc -l 加多个 grep -n -C，任意大小的文件都适用——要在某个文件里定位代码/符号/用法时，**优先用它，别再用 grep_files**。注意：它只返回命中行+上下文，要通读整段/整文件请用 read_file_with_lines。",
+                "description": "在【已知的某个文件】里深挖的利器：一次拿到该文件总行数 + 多个关键词/正则的全部命中(带行号，可带前后 context 上下文，可 offset 翻页)，等价于对这一个文件跑 wc -l 加多个 grep -n -C。适用于：已经定位到文件、要在里面找若干符号/用法并看上下文。注意：① 必须先给 filepath、只看单个文件——想在整个仓库里找『哪些文件含 X』请用 grep_files(跨文件发现)；② 它只回命中行+上下文，要通读整段/整文件请用 read_file_with_lines。",
                 "parameters": {
                     "type": "object",
                     "properties": {

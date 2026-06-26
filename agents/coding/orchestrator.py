@@ -52,6 +52,7 @@ PHASE_MAX_ROUNDS = {
     "check": 8,
 }
 MAX_CYCLES = 3
+MAX_SEARCH_ROUNDS = 2  # 一轮规划里 planner↔searcher 最多来回几次，封顶防转圈
 
 
 class CodingOrchestrator(BaseManager):
@@ -140,6 +141,12 @@ class CodingOrchestrator(BaseManager):
                     "\n\n【前情提要（这是续跑/返工，下面是已做过的计划与最近对话；"
                     "已知的需求别再重新问用户，直接在此基础上承接）】\n" + recap
                 )
+            if d.get("search_text"):
+                out += (
+                    "\n\n【侦察兵带回的资料（据此把粗计划细化为可执行计划；"
+                    "若还缺关键信息，再打 [NEED_SEARCH] 并写清要查什么；"
+                    "信息够了就直接给最终计划、不要打标记 → 进入开发）】\n" + d["search_text"]
+                )
             if d.get("last_error"):
                 out += (
                     "\n\n【上一轮验证失败的报错（请据此修正计划）】\n"
@@ -179,20 +186,29 @@ class CodingOrchestrator(BaseManager):
 
     def advance(self, ctx, last_step, last_result=None):
         if last_step == "plan":
-            # search 默认跳过：planner 自己读过了，够用就直接 develop；
-            # 只有它明确要大范围跨文件侦察、打了 [NEED_SEARCH] 才走 searcher。
+            # 简单任务：planner 直接给计划 → develop 自己读自己改。
+            # 复杂任务：planner 打 [NEED_SEARCH] → 派 searcher 找资料（封顶 MAX_SEARCH_ROUNDS 轮）。
             plan_text = ctx.shared.get("plan_text", "") or ""
-            return "search" if "[NEED_SEARCH]" in plan_text else "develop"
+            sr = int(ctx.shared.get("search_rounds", 0) or 0)
+            if "[NEED_SEARCH]" in plan_text and sr < MAX_SEARCH_ROUNDS:
+                ctx.shared["search_rounds"] = sr + 1
+                self.state.set("search_rounds", sr + 1)
+                return "search"
+            return "develop"
+        if last_step == "search":
+            return "plan"  # 侦察结果交回 planner 整合、再决定够不够（够了就不打标记→develop）
         if last_step != "check":
             return PHASE_SEQUENCE[PHASE_SEQUENCE.index(last_step) + 1]
         if ctx.shared.get("_check_passed"):
-            return None  # check 通过：done 已在 _capture 置位
+            return None  # check 通过：转「待确认」已在 _capture 置位
         cyc = ctx.shared["cycle"] + 1
         ctx.shared["cycle"] = cyc
         self.state.set("cycle", cyc)
         if cyc >= MAX_CYCLES:
             ctx.shared["_exhausted"] = True
             return None
+        ctx.shared["search_rounds"] = 0  # 新一轮 cycle，搜索预算重置
+        self.state.set("search_rounds", 0)
         self._emit("cycle", {"cycle": cyc})
         return PHASE_SEQUENCE[0]
 
