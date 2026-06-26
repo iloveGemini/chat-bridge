@@ -5,6 +5,7 @@ from pathlib import Path
 
 import agent
 from core.config import config, config_lock
+from agents.manager import run_coding
 from routes.registry import post, get
 
 try:
@@ -41,7 +42,7 @@ def _send(h, query, session, session_id):
     with config_lock:
         _use_orch = (config.get("coding", {}) or {}).get("orchestrator", True)
     if _use_orch and _run_coding_orchestrator is not None:
-        _runner, _mode = _run_coding_orchestrator, "orchestrator"
+        _runner, _mode = run_coding, "orchestrator"
     else:
         _runner, _mode = agent.run_agent_turn, "legacy"
     print(f"[agent/send] task={task_id} 路由 -> {_mode}")

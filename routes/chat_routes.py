@@ -16,6 +16,7 @@ from chat.envelope import ingest_reply
 from chat.tts import _tts_cfg, synth_tts, _character_voice
 from chat.notify import _push_notify
 from chat.llm import call_llm_api
+from agents.manager import run_rp
 from routes.registry import post
 
 
@@ -79,7 +80,7 @@ def _submit(h, query, session, session_id):
     log_print(f"📥 [用户输入][{session_id}]: {clean_input[:35]}...")
 
     if config.get("mode") == "api":
-        threading.Thread(target=call_llm_api, args=(session_id,)).start()
+        threading.Thread(target=run_rp, args=(session_id,)).start()
     else:
         with session.lock:
             session.pending_text = text
@@ -265,7 +266,7 @@ def _reroll(h, query, session, session_id):
         session.interrupted = False
     session.save_messages_async()
     if config.get("mode") == "api":
-        threading.Thread(target=call_llm_api, args=(session_id,)).start()
+        threading.Thread(target=run_rp, args=(session_id,)).start()
     else:
         user_text = ""
         with session.lock:

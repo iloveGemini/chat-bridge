@@ -77,3 +77,20 @@ class StaticManager(BaseManager):
 
     def advance(self, ctx: AgentContext, last_step, last_result: AgentResult):
         return None  # 单跳：选中谁就跑谁，跑完即止
+
+
+# ---------------- 顶层单例 + server 热路径入口 ----------------
+# server 只把「功能参数」交给 Manager，由它路由到对应节点（Function 或子 Manager）。
+MANAGER = StaticManager()
+
+
+def run_rp(session_id):
+    """RP 聊天主链路入口：经 Manager 路由到 rp 叶子（= call_llm_api）。"""
+    return MANAGER.dispatch(AgentContext(agent_type="rp", session_id=session_id))
+
+
+def run_coding(task_id, user_msg, on_event=None):
+    """Coding 入口：经 Manager 路由到 coding 组合节点（= 5 阶段 orchestrator）。"""
+    return MANAGER.dispatch(
+        AgentContext(agent_type="coding", task_id=task_id, user_msg=user_msg, on_event=on_event)
+    )
