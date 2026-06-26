@@ -198,3 +198,41 @@
 - 领域包：core(paths/net/config) · session(session/tools) · prompts · memory · chat(scene/envelope/tts/notify/outreach/llm)
   · agents/coding(orchestrator+5角色) · tools(registry+RBAC) · routes。
 - 增量迁移策略：dispatch 命中即处理、未命中回落旧链，每刀独立可验证、行为零变化。
+
+---
+
+# 多 Agent 生态企划 —— 实现阶段总览
+
+> 设计全文见 `ARCHITECTURE.md`。以下为已落地的实现，均**增量、可验证、默认行为不变**（除 §3 段位置是有意改变）。
+
+## §2 提示词组装（PromptAssembler 槽位骨架）
+- 新建 `prompts/assembler.py`：固定槽位骨架
+  System头(Main/World_Env/Role/User/Memory_before) + History + Tail(Status/Memory_after/Tone_Style/Post/Reasoning_Scaffold/Output_Format)。
+- 把原 RP 的 build_header/tail 平移进来，验证**逐字节等价**；`chat/llm.py` 与 `chat/outreach.py` 两条链路统一调它。
+- 删除旧 `build_header_prompt`/`build_tail_anchor`，prompts 域收干净。
+
+## §6 模型参数 resolve 层
+- 新建 `core/model_params.py`：`model_caps`(能力) + `sampling`(期望值) 两层 + `resolve_sampling`/`build_sampling` 裁剪。
+- 三条 LLM 链路(chat 0.7 / 主动 0.8 / 总结 0.2)硬编码温度 → `**build_sampling(api_cfg, X)`；默认等价。
+- 扩展点：`config.api.sampling`(temperature/top_p/max_tokens/stream/reasoning_effort/extra) + `config.api.caps`。
+
+## §3 统一注入管道（worldbook + memory 按 position 分流）
+- `memory_store`：lore 加 `position` 列(默认 after，含旧库迁移)；`build_memory_context` 加 `before_out` 出参分桶。
+- `SECTION_POSITION` 表(可调)：fact_graph/relation_arc/recent_state→before(系统头常驻)，episodic/original_dialogue→after(尾部召回)。
+- `build_injected_memory` 返回 `{before, after}` → assembler 的 Memory_before(`<persistent_memory>`) / Memory_after(`<recalled_memory>`)。
+- 回落保护：不传 before_out 的旧调用全部回落 after，不丢内容。**注：此刀有意改变 RP prompt 结构。**
+
+## §5 Agent 生态基座（未接 server 热路径）
+- 新建 `agents/base.py`(AgentContext/AgentResult/BaseAgent+注册表)、`agents/manager.py`(BaseManager+StaticManager)。
+- 适配器(包一层不改原实现)：`agents/coding/agent.py`、`agents/rp/agent.py`，各声明 `default_tool_grant`。
+- 故意只从 coding+RP 两个真实 agent 归纳，不预抽象第三个。
+
+## §4 工具能力组模型
+- `tools/registry`：`TOOL_GROUPS{outreach/coding/web}`(对齐 SESSION_TOOL_KEYS，惰性 provider) + `resolve_tools(allowed∩enabled)`。
+- agent 按能力组授权(coding→["coding"]，rp→全部) ∩ 会话 toggle(实例覆盖)；coding 逐角色 RBAC 正交保留。
+- RP `call_llm_api` 硬编码 if 链 → `resolve_tools(SESSION_TOOL_KEYS, tools_cfg)`，全组合行为等价。
+
+## ⏳ 未做（待前端改版一起）
+- §1 输出格式：XML profile(prompt 规范 + tag_schema + parser + renderer)双面同源打包、`<thinking>` hidden、降级开关。
+- 前端：§3 的 before/after 选择 UI、§4 的 agent 自定义授权 UI、§1 的 type→renderer 渲染注册表。
+- Manager 接入 server 热路径（现仍 server 直连 orchestrator/call_llm_api）。
