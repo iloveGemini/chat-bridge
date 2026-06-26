@@ -299,8 +299,9 @@ def run_summary(session, chat_history):
     ]
     ev_pairs = [(ev, s) for ev, s in ev_pairs if s]
     ev_vecs = embed_texts([s for _, s in ev_pairs]) if ev_pairs else None
+    generated_event_ids = []
     for i, (ev, s) in enumerate(ev_pairs):
-        memory_store.upsert_event(
+        eid = memory_store.upsert_event(
             scope,
             s,
             session_id=sid,
@@ -313,6 +314,7 @@ def run_summary(session, chat_history):
             place_label=ev.get("placeLabel"),
             embedding=(ev_vecs[i] if ev_vecs else None),
         )
+        generated_event_ids.append(eid)
 
     # factUpdates（KV 覆盖 / 状态钢印 / 静默抹杀）；兼容旧字段名 facts
     fact_updates = parsed.get("factUpdates")
@@ -356,6 +358,7 @@ def run_summary(session, chat_history):
         chunk_pairs.append((spk, t))
 
     ch_vecs = embed_texts([t for _, t in chunk_pairs]) if chunk_pairs else None
+    first_event_id = generated_event_ids[0] if generated_event_ids else None
     for i, (spk, t) in enumerate(chunk_pairs):
         memory_store.add_chunk(
             scope,
@@ -363,6 +366,7 @@ def run_summary(session, chat_history):
             session_id=sid,
             speaker=spk,
             embedding=(ch_vecs[i] if ch_vecs else None),
+            event_id=first_event_id,
         )
 
     log_print(

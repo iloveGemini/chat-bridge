@@ -106,7 +106,8 @@ def init_db(db_path: str) -> None:
           msg_floor INTEGER,
           text TEXT NOT NULL,
           embedding BLOB,
-          created_at TEXT
+          created_at TEXT,
+          event_id INTEGER
         );
         """)
         _conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_scope ON chunks(scope);")
@@ -159,6 +160,8 @@ def init_db(db_path: str) -> None:
         _cols = [r[1] for r in _conn.execute("PRAGMA table_info(chunks)").fetchall()]
         if "speaker" not in _cols:
             _conn.execute("ALTER TABLE chunks ADD COLUMN speaker TEXT;")
+        if "event_id" not in _cols:
+            _conn.execute("ALTER TABLE chunks ADD COLUMN event_id INTEGER;")
         _cols_lore = [r[1] for r in _conn.execute("PRAGMA table_info(lore)").fetchall()]
         if "position" not in _cols_lore:
             _conn.execute("ALTER TABLE lore ADD COLUMN position TEXT DEFAULT 'after';")
@@ -291,6 +294,7 @@ def add_chunk(
     msg_floor: Optional[int] = None,
     embedding: Optional[list[float]] = None,
     speaker: Optional[str] = None,
+    event_id: Optional[int] = None,
 ) -> int:
     """添加一条聊天切片细节（speaker 为说话人标签：RP 角色名 / 用户）"""
     global _conn
@@ -304,10 +308,10 @@ def add_chunk(
         cursor = _conn.cursor()
         cursor.execute(
             """
-            INSERT INTO chunks (scope, session_id, msg_floor, text, embedding, created_at, speaker)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO chunks (scope, session_id, msg_floor, text, embedding, created_at, speaker, event_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-            (scope, session_id, msg_floor, text, blob, now, speaker),
+            (scope, session_id, msg_floor, text, blob, now, speaker, event_id),
         )
         _conn.commit()
         return cursor.lastrowid
