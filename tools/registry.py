@@ -30,7 +30,7 @@ _load_package(tools.common)
 ROLE_PERMISSIONS = {
     # 规划者只规划/提问，不自己读文件——把"找资料"交给跑得快的 searcher(worker_api)，
     # 避免在主模型(rpm 低)上一轮轮瞎翻。需要资料就打 [NEED_SEARCH] 派侦察兵。
-    "planner": ["ask_user_clarification", "update_plan"],
+    "planner": ["ask_user_clarification", "update_plan", "add_workspace_file", "remove_workspace_file"],
     "searcher": ["read_file_with_lines", "grep_files", "glob_files", "get_outline", "get_function_code", "smart_file_insight"], # 侦察兵只能读
     "coder": [], # 纯写代码，不直接调工具
     "writer": ["apply_file_edits", "batch_write_files", "replace_in_file"], # 打字员只能写

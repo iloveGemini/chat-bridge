@@ -13,7 +13,7 @@ class CodeAgentView {
   constructor() {
     this.currentTaskId = null;
     this.messages = [];
-    this.workspaceFiles = [];
+    this.task = { status: "就绪", progress: 0 };
     this.task = { status: "就绪", progress: 0 };
     this._bound = false;
     this.generating = false;
@@ -243,7 +243,6 @@ class CodeAgentView {
     if (this.currentTaskId !== taskId) {
       this.currentTaskId = taskId;
       this.messages = [];
-      this.workspaceFiles = [];
       this._lastTurnId = 0;
 
       const titleEl = document.querySelector("#code-agent-view .agent-name");
@@ -670,17 +669,26 @@ class CodeAgentView {
     `;
   }
 
-  addFileToWorkspace(filename, status = "loaded") {
-    if (!this.workspaceFiles.some((f) => f.name === filename)) {
-      this.workspaceFiles.push({ name: filename, status });
-      this.renderFiles();
+  async addFileToWorkspace(filename, status = "loaded") {
+    if (!this.currentTaskId) return;
+    await window.api.agentContextAdd(this.currentTaskId, filename, "full");
+    
+    // Optimistic update
+    if (!this.pinnedContext) this.pinnedContext = [];
+    if (!this.pinnedContext.some(c => c.filepath === filename)) {
+      this.pinnedContext.push({ filepath: filename, mode: "full" });
     }
+    this.renderFiles();
   }
 
-  removeFileFromWorkspace(filename) {
-    this.workspaceFiles = this.workspaceFiles.filter(
-      (f) => f.name !== filename,
-    );
+  async removeFileFromWorkspace(filename) {
+    if (!this.currentTaskId) return;
+    await window.api.agentContextRemove(this.currentTaskId, filename);
+    
+    // Optimistic update
+    if (this.pinnedContext) {
+      this.pinnedContext = this.pinnedContext.filter(c => c.filepath !== filename);
+    }
     this.renderFiles();
   }
 

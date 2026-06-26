@@ -7,7 +7,7 @@ import runtime.coding_runtime as agent
 from core.config import config, config_lock, save_config as _save_config
 from agents.manager import run_coding
 from routes.registry import post, get
-
+from agents.coding.state import CodingState
 try:
     from agents.coding.orchestrator import run_coding_task as _run_coding_orchestrator
 except Exception:
@@ -179,6 +179,13 @@ def _task(h, query, session, session_id):
     if not task:
         h._json({"ok": False, "error": "not found"}, 404)
         return
+    
+    # 附加 todos
+    try:
+        task["todos"] = CodingState(task["workspace"]).get_todos()
+    except Exception:
+        task["todos"] = []
+
     cp = agent.get_checkpoint(tid)
     h._json({
         "ok": True,
