@@ -141,7 +141,7 @@ class ApiService {
   agentConfirm(task_id) { return this.post('/api/agent/confirm', { task_id }); }
   agentApprovePlan(task_id) { return this.post('/api/agent/approve_plan', { task_id }); }
   agentMode() { return this.get('/api/agent/mode'); }
-  agentSetMode(ask_before_acting) { return this.post('/api/agent/mode', { ask_before_acting }); }
+  agentSetMode(patch) { return this.post('/api/agent/mode', patch || {}); }
   agentEnqueue(task_id, text) { return this.post('/api/agent/enqueue', { task_id, text }); }
   fetchLogs(after) { return this.get('/api/logs?after=' + (after || 0)); }
   agentLastPrompt(id) { return this.get('/api/agent/last_prompt?id=' + encodeURIComponent(id)); }

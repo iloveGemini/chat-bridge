@@ -78,8 +78,30 @@ def _finish_tool():
     }
 
 
-def _manager_tools():
+def _commit_tool():
+    return {
+        "type": "function",
+        "function": {
+            "name": "commit",
+            "description": (
+                "把当前已完成的一个功能块用 git 提交(add -A && commit)。仅在完成一个相对独立、"
+                "已验证的功能单元后调用，便于出问题时按块回退，不必整个推倒。message 一句话描述这块改了什么。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {"type": "string", "description": "这次提交说明(一句话，描述该功能块的改动)"}
+                },
+                "required": ["message"],
+            },
+        },
+    }
+
+
+def _manager_tools(commit_enabled=False):
     tools = [_dispatch_tool(), _finish_tool()]
+    if commit_enabled:
+        tools.append(_commit_tool())  # 仅在「分块提交」授权开启时给经理 commit 能力
     clar = _REGISTRY.get("ask_user_clarification")
     if clar:
         tools.append(clar["schema"])
@@ -130,6 +152,13 @@ class CodingOrchestrator(BaseManager):
         """全局模式开关：开启时，派 developer 动文件前先暂停让用户批准。"""
         try:
             return bool((agent.load_config().get("coding", {}) or {}).get("ask_before_acting", False))
+        except Exception:
+            return False
+
+    def _commit_per_block(self):
+        """全局开关：授权经理在大改动里按功能块分次 git 提交。"""
+        try:
+            return bool((agent.load_config().get("coding", {}) or {}).get("commit_per_block", False))
         except Exception:
             return False
 
@@ -280,7 +309,8 @@ class CodingOrchestrator(BaseManager):
                 {"role": "user", "content": user0},
             ]
 
-            tools = _manager_tools()
+            commit_enabled = self._commit_per_block()
+            tools = _manager_tools(commit_enabled)
             manager_chat = self._chat_for("api")
             approved = bool(self.state.get("plan_approved"))
 
@@ -336,6 +366,16 @@ class CodingOrchestrator(BaseManager):
                         final_text = (args.get("summary") or "").strip() or "改动已完成，待你确认。"
                         stop = True
                         break
+
+                    if name == "commit":
+                        msg = (args.get("message") or "").strip() or "WIP"
+                        r = agent.git_commit(self.task["workspace"], f"agent: {msg}")
+                        tip = r.get("msg", "")
+                        agent.add_turn(self.task_id, "system", "text", f"📦 提交：{msg}" + (f"（{tip}）" if tip else ""))
+                        _jadd(f"已 git 提交：{msg}")
+                        messages.append({"role": "tool", "tool_call_id": tc.get("id"),
+                                         "content": json.dumps(r, ensure_ascii=False)})
+                        continue
 
                     if name == "dispatch":
                         agent_name = args.get("agent", "")

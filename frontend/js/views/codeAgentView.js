@@ -66,6 +66,15 @@ class CodeAgentView {
       const header = document.querySelector("#code-agent-view .workspace-header");
       if (header) header.appendChild(this.modeBtn);
       this.modeBtn.addEventListener("click", () => this.toggleMode());
+
+      // 分块提交授权开关：📦分块提交 / 📦仅确认时
+      this.commitBtn = document.createElement("button");
+      this.commitBtn.id = "ca-commit-btn";
+      this.commitBtn.style.cssText = this.modeBtn.style.cssText;
+      this.commitBtn.textContent = "提交…";
+      if (header) header.appendChild(this.commitBtn);
+      this.commitBtn.addEventListener("click", () => this.toggleCommit());
+
       this.loadMode();
     }
 
@@ -836,10 +845,44 @@ class CodeAgentView {
     try {
       const r = await api.agentMode();
       this._askBefore = !!(r && r.ask_before_acting);
+      this._commitBlock = !!(r && r.commit_per_block);
     } catch (e) {
       this._askBefore = false;
+      this._commitBlock = false;
     }
     this._renderModeBtn();
+    this._renderCommitBtn();
+  }
+
+  _renderCommitBtn() {
+    if (!this.commitBtn) return;
+    if (this._commitBlock) {
+      this.commitBtn.textContent = "📦 分块提交";
+      this.commitBtn.style.color = "#4ec9b0";
+      this.commitBtn.style.borderColor = "#2e6b4f";
+      this.commitBtn.title = "已授权：大改动里按功能块分次 git 提交（出小问题可按块回退）";
+    } else {
+      this.commitBtn.textContent = "📦 仅确认时";
+      this.commitBtn.style.color = "#aaa";
+      this.commitBtn.style.borderColor = "#555";
+      this.commitBtn.title = "只在你确认完成后提交一次（不授权分块提交）";
+    }
+  }
+
+  async toggleCommit() {
+    const next = !this._commitBlock;
+    try {
+      const r = await api.agentSetMode({ commit_per_block: next });
+      if (r && r.ok) {
+        this._commitBlock = !!r.commit_per_block;
+        this._renderCommitBtn();
+        showToast(this._commitBlock ? "已授权：按功能块分次提交" : "已关闭：仅确认完成后提交");
+      } else {
+        showToast("切换失败");
+      }
+    } catch (e) {
+      showToast("切换失败");
+    }
   }
 
   _renderModeBtn() {
@@ -860,7 +903,7 @@ class CodeAgentView {
   async toggleMode() {
     const next = !this._askBefore;
     try {
-      const r = await api.agentSetMode(next);
+      const r = await api.agentSetMode({ ask_before_acting: next });
       if (r && r.ok) {
         this._askBefore = !!r.ask_before_acting;
         this._renderModeBtn();

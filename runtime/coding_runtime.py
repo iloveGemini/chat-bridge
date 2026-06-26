@@ -154,6 +154,30 @@ def set_last_prompt(task_id, messages, round_=None, model=None, phase=None):
         }
 
 
+def git_commit(workspace, message):
+    """在工作区里做一次 git 提交（git add -A && git commit）。
+    仅当工作区本身是 git 仓库(in-place 跑真实项目)时才提交；沙箱副本无 .git，安全跳过。"""
+    import subprocess
+    ws = str(workspace)
+    if not (Path(ws) / ".git").exists():
+        return {"ok": False, "skipped": True, "msg": "非 git 仓库，跳过提交"}
+    msg = (message or "agent 自动提交").strip()[:300]
+    try:
+        subprocess.run(["git", "add", "-A"], cwd=ws,
+                       capture_output=True, text=True, timeout=60)
+        r = subprocess.run(["git", "commit", "-m", msg], cwd=ws,
+                           capture_output=True, text=True, timeout=60)
+        out = ((r.stdout or "") + (r.stderr or "")).strip()
+        if r.returncode == 0:
+            _log(f"📦 git commit: {msg}")
+            return {"ok": True, "msg": out[:300]}
+        if "nothing to commit" in out or "无文件要提交" in out:
+            return {"ok": True, "empty": True, "msg": "无改动可提交"}
+        return {"ok": False, "msg": out[:300]}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+
 def workspace_tree(task_id):
     """对外：返回某任务工作区的【目录】树文本（供前端面板展示，只列目录避免太长）。"""
     t = get_task(task_id)

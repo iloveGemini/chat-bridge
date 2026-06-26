@@ -89,9 +89,15 @@ def _confirm(h, query, session, session_id):
         return
     agent.add_turn(tid, "system", "text", "✅ 用户已确认完成，工单关闭")
     agent.update_task(tid, status="已完成", progress=100)
-    # 任务真正完结 → 清空项目日志，下次是全新任务
+    # 确认完成 → 提交最终状态(分块模式下这一步通常只兜底剩余改动) + 清空项目日志
     task = agent.get_task(tid)
     if task:
+        try:
+            r = agent.git_commit(task["workspace"], "agent: 用户确认完成")
+            if r.get("ok") and not r.get("empty") and not r.get("skipped"):
+                agent.add_turn(tid, "system", "text", "📦 已提交最终改动")
+        except Exception:
+            pass
         try:
             from agents.coding.state import CodingState
             CodingState(task["workspace"]).set("journal", [])
@@ -103,19 +109,27 @@ def _confirm(h, query, session, session_id):
 @get("/api/agent/mode")
 def _get_mode(h, query, session, session_id):
     with config_lock:
-        v = bool((config.get("coding", {}) or {}).get("ask_before_acting", False))
-    h._json({"ok": True, "ask_before_acting": v})
+        c = config.get("coding", {}) or {}
+        v = bool(c.get("ask_before_acting", False))
+        cpb = bool(c.get("commit_per_block", False))
+    h._json({"ok": True, "ask_before_acting": v, "commit_per_block": cpb})
 
 
 @post("/api/agent/mode")
 def _set_mode(h, query, session, session_id):
-    """切换执行模式：Ask Before Acting(计划先批准) / Act Without Asking(直接干)。全局开关。"""
+    """切换全局开关：ask_before_acting(计划先批准) / commit_per_block(授权分块提交)。
+    只更新本次传来的键。"""
     data = h._read_json()
-    v = bool(data.get("ask_before_acting"))
     with config_lock:
-        config.setdefault("coding", {})["ask_before_acting"] = v
+        c = config.setdefault("coding", {})
+        if "ask_before_acting" in data:
+            c["ask_before_acting"] = bool(data.get("ask_before_acting"))
+        if "commit_per_block" in data:
+            c["commit_per_block"] = bool(data.get("commit_per_block"))
+        out = {"ask_before_acting": bool(c.get("ask_before_acting", False)),
+               "commit_per_block": bool(c.get("commit_per_block", False))}
     _save_config()
-    h._json({"ok": True, "ask_before_acting": v})
+    h._json({"ok": True, **out})
 
 
 @post("/api/agent/approve_plan")
