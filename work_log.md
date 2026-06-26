@@ -145,3 +145,12 @@
 - 验证：全部 py_compile 通过；import server 成功；假 Handler 实测：/api/agent/tasks、/api/agent/create
       分发命中且响应正确，未注册路径（/api/messages、/api/submit）正确回落（返回 False）。
 - server.py 累计：3754 -> 1640 行级别；已注册 16 条路由进 routes/，旧链尚余 ~63 条待后续按域迁移。
+
+## 模块化拆分 (server 瘦身, 第 9 刀: chat 主路由域)
+- [x] routes/chat_routes.py：迁入 11 条聊天 POST 路由——submit/clear/reply/tts/tts·option/
+      done/interrupt/typing/edit/delete/reroll（脚本逐条 verbatim 抽取，self.→h.，零手改逻辑）。
+- [x] routes/__init__.py 注册 chat_routes；do_POST 旧链删除这 11 条，prompts/save 由 elif 改 if 保持链完整。
+- 验证：全部 py_compile 通过；import server 成功，POST 注册数 19（8 agent + 11 chat）；
+      假 Handler 实测 /api/clear（清空+置中断+无响应，与旧行为一致）、/api/done（返回 ok）命中正确；
+      未迁移路由（/api/prompts/save）正确回落旧链。
+- server.py 累计：3754 -> 1400 行级别。旧链剩约 52 条路由（prompts/sessions/presets/config/memory/worldbook/GET 等）。

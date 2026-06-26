@@ -3,7 +3,6 @@ Chat Bridge Server (Dual Engine + Long-Term Auto Memory + Vision + Multi-Session
 Usage: python server.py [port]
 """
 
-import base64
 import http.server
 import json
 import shutil
@@ -41,16 +40,12 @@ if sys.platform == "win32":
 # 路径常量 / 配置单例 / 网络工具 已抽离到 core/ 包，这里导入回本模块命名空间，
 # 既让本文件内的裸名引用（PORT/config/log_print…）继续可用，也保持 server.xxx 的向后兼容。
 import routes
-from chat.envelope import ingest_reply
-from chat.llm import call_llm_api
 from chat.notify import _detect_lan_ip, _push_notify, _resolved_notify_cfg, set_lan_base
 from chat.outreach import (
     _fire_outreach,
     _get_last_user_ts,
     _parse_when,
 )
-from chat.scene import _scene_stamp
-from chat.tts import _character_voice, _tts_cfg, synth_tts
 from core.config import (
     _auth_cfg,
     _auth_enabled,
@@ -80,13 +75,9 @@ from core.paths import (
 from memory.memory import (
     _lore_embedding,
     _migrate_legacy_memory,
-    _needs_summary,
     build_injected_memory,
     embed_query,
     summarize_session,
-)
-from prompts.prompts import (
-    _get_display_name,
 )
 from session.session import (
     SESSION_BINDING_KEYS,
@@ -407,246 +398,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if routes.dispatch_post(self, path, query, session, session_id):
             return
 
-        if path == "/api/submit":
-            length = int(self.headers.get("Content-Length", 0))
-            body = _safe_decode(self.rfile.read(length))
-            try:
-                data = json.loads(body)
-            except Exception:
-                data = {"text": body}
-
-            text = data.get("text", "").strip()
-            image_data = data.get("image")
-
-            if not text and not image_data:
-                self._json({"ok": False, "error": "empty input"})
-                return
-
-            if config.get("mode") != "api" and image_data:
-                try:
-                    b64_str = image_data.split(",", 1)[-1]
-                    file_path = UPLOAD_DIR / f"{session_id}_up_{int(time.time())}.jpg"
-                    file_path.write_bytes(base64.b64decode(b64_str))
-                    text += f"\n\n[注：用户图片保存在：{file_path.absolute()}]"
-                except Exception as e:
-                    log_print(f"[警告] 图片保存失败: {e}")
-
-            # 前端选择不再单独写服务器：会话绑定（preset/world/user/character 名字）
-            # 跟着这条消息一起送来，在这里随消息的安全写入一并持久化。
-            cfg = data.get("config")
-            if isinstance(cfg, dict):
-                with session.lock:
-                    for k in SESSION_BINDING_KEYS:
-                        if k in cfg and cfg[k]:
-                            session.active_prompts[k] = _safe_name(cfg[k]) or "default"
-                session.save_active_prompts()
-
-            # 用户消息继承当前场景坐标盖戳（用于总结时按 scene 分块）
-            msg_to_save = {
-                "role": "user",
-                "text": text,
-                "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                **_scene_stamp(session),
-            }
-            if image_data:
-                msg_to_save["image"] = image_data
-
-            with session.lock:
-                session.messages.append(msg_to_save)
-                # 👇 修复：在这个绝对同步的环节立刻挂上锁，防止前端由于时间差读到 False
-                session.is_typing = True
-                session.typing_ts = time.time()
-                # pending 是前端等待锁的唯一判据：从用户发送这一刻起就 pending，
-                # 不管 api/claude_mode，直到真正有回复（或中断/清空）才解除，不依赖 is_typing 的 120s 超时。
-                session.pending_event.set()
-                session.interrupted = False
-            session.save_active_prompts()  # (注意原有代码这里可能是 save_messages_async，保持你的原有调用即可)
-            session.save_messages_async()
-            clean_input = " ".join(text.split())
-            log_print(f"📥 [用户输入][{session_id}]: {clean_input[:35]}...")
-
-            if config.get("mode") == "api":
-                threading.Thread(target=call_llm_api, args=(session_id,)).start()
-            else:
-                with session.lock:
-                    session.pending_text = text
-                session.pending_event.set()
-                global_pending_event.set()
-
-            self._json({"ok": True})
-            return
-
-        elif path == "/api/clear":
-            with session.lock:
-                session.messages = []
-                session.pending_event.clear()
-                session.pending_text = ""
-                session.is_typing = False
-                session.interrupted = True
-            session.save_messages_async()
-        elif path == "/api/reply":
-            length = int(self.headers.get("Content-Length", 0))
-            body = _safe_decode(self.rfile.read(length))
-            _rbody = json.loads(body) if "{" in body else {"text": body}
-
-            with session.lock:
-                if session.interrupted:
-                    log_print(
-                        f"🚫 [claude_mode 丢弃回复][{session_id}] 会话已被中断，丢弃此条回复。"
-                    )
-                    # 不要在这里设 session.interrupted = False，因为可能还有后续工具调用返回
-                    self._json({"ok": True})
-                    return
-
-            reply_txt = (_rbody.get("text", "") or "").strip()
-            is_proactive = bool(_rbody.get("proactive"))
-            # claude_mode 回复同样走信封解析：推进场景闩锁，只落干净正文
-            reply_txt, _meta = ingest_reply(session, reply_txt)
-            msg = {
-                "role": "assistant",
-                "text": reply_txt,
-                "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                **_scene_stamp(session),
-            }
-            if is_proactive:
-                msg["proactive"] = True
-            if _meta.get("emotion"):
-                msg["emotion"] = _meta["emotion"]
-            if _meta.get("voice_text"):
-                msg["voice_text"] = _meta["voice_text"]
-            with session.lock:
-                session.messages.append(msg)
-                # 👇 修复：外部写入消息后，必须解除打字状态并清空等待事件
-                session.is_typing = False
-                session.pending_event.clear()
-            session.save_messages_async()
-            # 主动消息（调度唤醒角色组织的）→ 推送到手机
-            if is_proactive:
-                char_name = _get_display_name(
-                    "character", session.active_prompts.get("character"), "AI助手"
-                )
-                ok, detail = _push_notify(char_name, reply_txt)
-                log_print(
-                    f"🔔 [主动·claude_mode→{session.session_id}] 推送 ok={ok} ({detail})"
-                )
-            # claude_mode 的回复不走 call_llm_api，总结触发器需在此补上
-            if _needs_summary(session):
-                threading.Thread(target=summarize_session, args=(session,)).start()
-            self._json({"ok": True})
-
-        elif path == "/api/tts":
-            # 按需语音合成：前端点了播放 / 自动读开着时才调到这里，只为真听的句子付费
-            length = int(self.headers.get("Content-Length", 0))
-            try:
-                data = json.loads(_safe_decode(self.rfile.read(length)))
-            except Exception:
-                data = {}
-            if not _tts_cfg().get("enabled"):
-                self._json({"ok": False, "error": "tts_disabled"})
-                return
-            # 音色优先级：试听传入的 voice（整体覆盖）> 当前会话角色的 voice > 全局 config.tts
-            voice_override = data.get("voice")
-            if isinstance(voice_override, dict) and voice_override:
-                override = dict(voice_override)  # 试听：整体覆盖
-            else:
-                char_name = session.active_prompts.get("character") if session else None
-                override = dict(_character_voice(char_name)) if char_name else {}
-                em = data.get("emotion")  # 该条消息的情绪叠加到角色音色上
-                if em:
-                    override["emotion"] = em
-            audio_url = synth_tts(data.get("text", ""), override=override)
-            if audio_url:
-                self._json({"ok": True, "audio": audio_url})
-            else:
-                self._json({"ok": False, "error": "synth_failed"})
-            return
-
-        elif path == "/api/tts/option":
-            # 语音布尔小开关（前端一键切换 skip_narration / autoplay / enabled），单键合并保存
-            length = int(self.headers.get("Content-Length", 0))
-            try:
-                data = json.loads(_safe_decode(self.rfile.read(length)))
-            except Exception:
-                data = {}
-            key = data.get("key")
-            if key not in ("enabled", "skip_narration", "autoplay"):
-                self._json({"ok": False, "error": "bad_key"})
-                return
-            with config_lock:
-                config.setdefault("tts", {})
-                config["tts"][key] = bool(data.get("value"))
-                val = config["tts"][key]
-            _save_config()
-            self._json({"ok": True, "key": key, "value": val})
-            return
-
-        elif path == "/api/done":
-            with session.lock:
-                session.pending_event.clear()
-            self._json({"ok": True})
-
-        elif path == "/api/interrupt":
-            with session.lock:
-                session.is_typing = False
-                session.pending_event.clear()
-                session.interrupted = True
-            self._json({"ok": True})
-        elif path == "/api/typing":
-            with session.lock:
-                session.is_typing = True
-                session.typing_ts = time.time()
-            self._json({"ok": True})
-
-        # ====== 这是补回来的旧接口支持 ======
-        elif path == "/api/edit":
-            length = int(self.headers.get("Content-Length", 0))
-            data = json.loads(_safe_decode(self.rfile.read(length)))
-            idx, text = data.get("index"), data.get("text", "").strip()
-            with session.lock:
-                if idx is not None and 0 <= idx < len(session.messages):
-                    session.messages[idx]["text"] = text
-                    session.messages[idx]["edited"] = True
-            session.save_messages_async()
-            self._json({"ok": True})
-
-        elif path == "/api/delete":
-            length = int(self.headers.get("Content-Length", 0))
-            idx = json.loads(_safe_decode(self.rfile.read(length))).get("index")
-            with session.lock:
-                if idx is not None and 0 <= idx < len(session.messages):
-                    session.messages.pop(idx)
-            session.save_messages_async()
-            self._json({"ok": True})
-
-        elif path == "/api/reroll":
-            length = int(self.headers.get("Content-Length", 0))
-            idx = json.loads(_safe_decode(self.rfile.read(length))).get("index")
-            with session.lock:
-                if (
-                    idx is not None
-                    and 0 <= idx < len(session.messages)
-                    and session.messages[idx]["role"] == "assistant"
-                ):
-                    session.messages.pop(idx)
-                session.interrupted = False
-            session.save_messages_async()
-            if config.get("mode") == "api":
-                threading.Thread(target=call_llm_api, args=(session_id,)).start()
-            else:
-                user_text = ""
-                with session.lock:
-                    for m in reversed(session.messages):
-                        if m["role"] == "user":
-                            user_text = m["text"]
-                            break
-                    session.pending_text = user_text
-                if user_text:
-                    session.pending_event.set()
-                    global_pending_event.set()
-            self._json({"ok": True})
-
-        # ================= 新增：多模块提示词管理 =================
-        elif path == "/api/prompts/save":
+        # 聊天主路由(submit/clear/reply/tts/tts·option/done/interrupt/typing/edit/delete/reroll)
+        # 已迁至 routes.chat_routes（分发表处理）
+        if path == "/api/prompts/save":
             length = int(self.headers.get("Content-Length", 0))
             data = json.loads(_safe_decode(self.rfile.read(length)))
             cat = data.get("category")
