@@ -89,6 +89,14 @@ def _confirm(h, query, session, session_id):
         return
     agent.add_turn(tid, "system", "text", "✅ 用户已确认完成，工单关闭")
     agent.update_task(tid, status="已完成", progress=100)
+    # 任务真正完结 → 清空项目日志，下次是全新任务
+    task = agent.get_task(tid)
+    if task:
+        try:
+            from agents.coding.state import CodingState
+            CodingState(task["workspace"]).set("journal", [])
+        except Exception:
+            pass
     h._json({"ok": True})
 
 

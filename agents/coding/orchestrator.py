@@ -248,10 +248,33 @@ class CodingOrchestrator(BaseManager):
                 + "\n\n【环境】沙箱为 Windows，所有路径相对工作区根目录。"
                 + (f"\n\n【工作区文件树】\n{tree}" if tree else "")
             )
+            # 持久化项目日志：经理的决策 + 各 worker 的结果都记进 state，
+            # 跨轮(暂停/批准/返工)回放，让经理在任务 finish 前始终有全局记忆。
+            journal = self.state.get("journal", []) or []
+            if not isinstance(journal, list):
+                journal = []
+
+            def _jadd(entry):
+                journal.append(entry)
+                try:
+                    self.state.set("journal", journal[-60:])  # 截断防膨胀
+                except Exception:
+                    pass
+
+            def _jtext(cap):
+                s = "\n".join(journal)
+                return s[-cap:] if len(s) > cap else s
+
             user0 = f"【原始需求】\n{req}"
-            recap = self._recap(user_msg)
-            if recap:
-                user0 += "\n\n【前情提要（续跑/返工，承接已知进展，别重新问已知需求）】\n" + recap
+            if journal:
+                user0 += (
+                    "\n\n【项目进度记录（本任务已做过的事，承接它继续，别重做/别重新问已知信息）】\n"
+                    + _jtext(24000)
+                )
+            else:
+                recap = self._recap(user_msg)
+                if recap:
+                    user0 += "\n\n【前情提要】\n" + recap
             messages = [
                 {"role": "system", "content": sys_full},
                 {"role": "user", "content": user0},
@@ -260,7 +283,6 @@ class CodingOrchestrator(BaseManager):
             tools = _manager_tools()
             manager_chat = self._chat_for("api")
             approved = bool(self.state.get("plan_approved"))
-            progress = []  # 各子 agent 的产出，喂给后续 worker
 
             for _round in range(MAX_MANAGER_ROUNDS):
                 if agent._check_cancel(self.task_id):
@@ -281,6 +303,7 @@ class CodingOrchestrator(BaseManager):
                 if content:
                     agent.add_turn(self.task_id, "assistant", "text", f"[planner] {content}")
                     self._emit("assistant", f"[planner] {content}")
+                    _jadd(f"经理：{content[:600]}")
 
                 if not tcs:
                     # 经理只说话没派活 → 多半在征求意见 / 需要你拍板
@@ -322,6 +345,7 @@ class CodingOrchestrator(BaseManager):
                         if reason:
                             agent.add_turn(self.task_id, "assistant", "text", f"[planner] {reason}")
                             self._emit("assistant", f"[planner] {reason}")
+                            _jadd(f"经理：{reason[:400]}")
                         if agent_name not in DISPATCHABLE:
                             messages.append({"role": "tool", "tool_call_id": tc.get("id"),
                                              "content": f"未知 agent：{agent_name}，可选 {list(DISPATCHABLE)}"})
@@ -337,13 +361,14 @@ class CodingOrchestrator(BaseManager):
                         agent.add_turn(self.task_id, "system", "text",
                                        f"🧭 派单 → {agent_name}：{instruction[:160]}")
                         self._emit("dispatch", {"agent": agent_name, "instruction": instruction})
-                        wr = self._run_worker(agent_name, instruction, "\n\n".join(progress))
+                        _jadd(f"派 {agent_name}：{instruction[:300]}")
+                        wr = self._run_worker(agent_name, instruction, _jtext(9000))
                         if wr.get("cancelled"):
                             interrupted = True
                             stop = True
                             break
                         result_text = wr.get("text", "") or "(无输出)"
-                        progress.append(f"[{agent_name}] {result_text}")
+                        _jadd(f"{agent_name} 结果：{result_text[:1500]}")
                         messages.append({"role": "tool", "tool_call_id": tc.get("id"),
                                          "content": result_text[:8000]})
                         continue
