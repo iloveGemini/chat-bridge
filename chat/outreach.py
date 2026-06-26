@@ -41,11 +41,11 @@ def _generate_proactive_message(session, intention):
     )
     user_name = _get_display_name("user", session.active_prompts.get("user"), "用户")
     asm = PromptAssembler(session)
-    header_prompt = asm.build_system_head(char_name, user_name)
-    memory_str = _apply_macros(
-        build_injected_memory(session, intention or ""), char_name, user_name
-    )
-    tail_anchor = asm.build_tail(char_name, user_name, memory_str)
+    _mem = build_injected_memory(session, intention or "")
+    memory_before = _apply_macros(_mem["before"], char_name, user_name)
+    memory_after = _apply_macros(_mem["after"], char_name, user_name)
+    header_prompt = asm.build_system_head(char_name, user_name, memory_before)
+    tail_anchor = asm.build_tail(char_name, user_name, memory_after)
 
     with session.lock:
         recent = [

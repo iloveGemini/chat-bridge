@@ -72,11 +72,11 @@ def call_llm_api(session_id):
 
     # 1~3. 用 PromptAssembler 按槽位骨架组装（行为与原 build_header/tail 等价）
     asm = PromptAssembler(session)
-    header_prompt = asm.build_system_head(char_name, user_name)
-    memory_str = _apply_macros(
-        build_injected_memory(session, last_user_text), char_name, user_name
-    )
-    tail_anchor = asm.build_tail(char_name, user_name, memory_str)
+    _mem = build_injected_memory(session, last_user_text)
+    memory_before = _apply_macros(_mem["before"], char_name, user_name)
+    memory_after = _apply_macros(_mem["after"], char_name, user_name)
+    header_prompt = asm.build_system_head(char_name, user_name, memory_before)
+    tail_anchor = asm.build_tail(char_name, user_name, memory_after)
 
     # 4. 极其优雅地拼装三明治上下文
     api_messages = [{"role": "system", "content": header_prompt}]
@@ -117,7 +117,7 @@ def call_llm_api(session_id):
 
     sys_preview = " ".join(header_prompt.split())[:40]
     last_u_preview = " ".join(last_user_text.split())[:40]
-    mem_lines_count = len(memory_str.splitlines()) if memory_str else 0
+    mem_lines_count = len(memory_after.splitlines()) if memory_after else 0
 
     log_print(
         f"↗️ [LLM 请求][{session_id}] ── {payload['model']} ({len(api_messages)}条上下文)"

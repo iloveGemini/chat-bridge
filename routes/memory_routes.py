@@ -201,7 +201,8 @@ def _lore_reindex(h, query, session, session_id):
 @get("/api/memory/context")
 def _get_memory_context(h, query, session, session_id):
     q = query.get("q", [""])[0]
-    h._json({"context": build_injected_memory(session, q)})
+    _m = build_injected_memory(session, q)
+    h._json({"context": "\n\n".join(x for x in (_m["before"], _m["after"]) if x)})
     return
 
 

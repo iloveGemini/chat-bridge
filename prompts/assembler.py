@@ -52,8 +52,9 @@ class PromptAssembler:
         u = _read_prompt_content("user", self.active.get("user", "default"))
         return f"<user_profile>\n{u}\n</user_profile>" if u else ""
 
-    def slot_memory_before(self):
-        return ""  # 预留 no-op（待 §3 position=before 的常驻记忆）
+    def slot_memory_before(self, memory_before=""):
+        mb = (memory_before or "").strip()
+        return f"<persistent_memory>\n{mb}\n</persistent_memory>" if mb else ""
 
     # ---------------- Tail 槽位 ----------------
     def slot_status(self):
@@ -77,9 +78,9 @@ class PromptAssembler:
         return ""  # 预留 no-op（待 §1 输出格式）
 
     # ---------------- 组装 ----------------
-    def build_system_head(self, char_name, user_name):
+    def build_system_head(self, char_name, user_name, memory_before=""):
         parts = [self.slot_main(), self.slot_world_env(), self.slot_role(),
-                 self.slot_user(), self.slot_memory_before()]
+                 self.slot_user(), self.slot_memory_before(memory_before)]
         head = "\n\n".join(p for p in parts if p)
         return _apply_macros(head, char_name, user_name)
 

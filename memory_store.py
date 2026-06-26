@@ -148,6 +148,7 @@ def init_db(db_path: str) -> None:
           content TEXT NOT NULL,
           priority INTEGER DEFAULT 0,    -- 抢预算时降序排序
           always_on INTEGER DEFAULT 0,   -- 1 = Tier 0，永远注入
+          position TEXT DEFAULT 'after', -- before=贴系统头(常驻) / after=贴尾部(召回)
           embedding BLOB,                -- 预留：语义通道用，MVP 不填
           created_at REAL, updated_at REAL
         );
@@ -158,6 +159,9 @@ def init_db(db_path: str) -> None:
         _cols = [r[1] for r in _conn.execute("PRAGMA table_info(chunks)").fetchall()]
         if "speaker" not in _cols:
             _conn.execute("ALTER TABLE chunks ADD COLUMN speaker TEXT;")
+        _cols_lore = [r[1] for r in _conn.execute("PRAGMA table_info(lore)").fetchall()]
+        if "position" not in _cols_lore:
+            _conn.execute("ALTER TABLE lore ADD COLUMN position TEXT DEFAULT 'after';")
 
         # 迁移：events 表打 3 个场景时空钢印（向后兼容，旧行为 NULL，召回时由 fallback 兜底）
         _ev_cols = [r[1] for r in _conn.execute("PRAGMA table_info(events)").fetchall()]
@@ -666,6 +670,7 @@ def build_memory_context(scope: str, session_id: str, *, query_vec: Optional[lis
                          lore_scan: str = "", lore_sem_topk: int = 3,
                          lore_sem_threshold: float = 0.40, lore_warm_rounds: int = 0,
                          lore_scopes: Optional[list] = None,
+                         before_out: Optional[list] = None,
                          diag: Optional[dict] = None) -> str:
     """多级混合检索并动态组装最终注入大模型的 Prompt 文本块。
     传入 diag={} 可拿到本次召回的可观测诊断（模式/分数/命中/去重），用于日志。
@@ -680,8 +685,13 @@ def build_memory_context(scope: str, session_id: str, *, query_vec: Optional[lis
                             sem_topk=lore_sem_topk, sem_threshold=lore_sem_threshold,
                             session_id=session_id, warm_rounds=lore_warm_rounds, diag=diag)
     if lore_hits:
-        lore_lines = [f"【{e['title']}】{e['content']}" for e in lore_hits]
-        sections.append("<world_book>\n" + "\n".join(lore_lines) + "\n</world_book>")
+        # §3 统一注入：lore 按 position 分桶。before→系统头(常驻)，after(默认)→尾部(召回)。
+        _before = [e for e in lore_hits if (e.get("position") or "after") == "before"]
+        _after = [e for e in lore_hits if (e.get("position") or "after") != "before"]
+        if _after:
+            sections.append("<world_book>\n" + "\n".join(f"【{e['title']}】{e['content']}" for e in _after) + "\n</world_book>")
+        if _before and before_out is not None:
+            before_out.append("<world_book>\n" + "\n".join(f"【{e['title']}】{e['content']}" for e in _before) + "\n</world_book>")
 
     # 召回模式：有查询向量走向量检索，否则降级关键词/时间线
     mode = "vector" if query_vec is not None else "keyword"
@@ -828,17 +838,19 @@ def _lore_row_to_dict(row: sqlite3.Row, *, keep_embedding: bool = False) -> dict
 
 
 def add_lore(scope: str, title: str, content: str, *, keys: Optional[list[str]] = None,
-             priority: int = 0, always_on: bool = False,
+             priority: int = 0, always_on: bool = False, position: str = "after",
              embedding: Optional[list[float]] = None) -> int:
     """新增一条世界书设定。keys 为触发词数组；always_on=True 则常驻。返回 id。"""
     now = time.time()
     with _lock:
         cur = _conn.execute("""
             INSERT INTO lore (scope, title, keys, content, priority, always_on,
-                              embedding, created_at, updated_at)
-            VALUES (?,?,?,?,?,?,?,?,?)
+                              position, embedding, created_at, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
         """, (scope, title, json.dumps(keys or [], ensure_ascii=False), content,
-              int(priority), 1 if always_on else 0, _encode_vec(embedding), now, now))
+              int(priority), 1 if always_on else 0,
+              ("before" if position == "before" else "after"),
+              _encode_vec(embedding), now, now))
         _conn.commit()
         return cur.lastrowid
 
@@ -852,7 +864,7 @@ def list_lore(scope: str) -> list[dict]:
 
 
 def update_lore(row_id, *, title=None, content=None, keys=None,
-                priority=None, always_on=None, embedding=None) -> bool:
+                priority=None, always_on=None, position=None, embedding=None) -> bool:
     """部分更新一条世界书条目。只改传入的字段。"""
     sets, params = [], []
     if title is not None:    sets.append("title=?");     params.append(title)
@@ -860,6 +872,7 @@ def update_lore(row_id, *, title=None, content=None, keys=None,
     if keys is not None:     sets.append("keys=?");      params.append(json.dumps(keys, ensure_ascii=False))
     if priority is not None: sets.append("priority=?");  params.append(int(priority))
     if always_on is not None:sets.append("always_on=?"); params.append(1 if always_on else 0)
+    if position is not None:  sets.append("position=?"); params.append("before" if position == "before" else "after")
     if embedding is not None:sets.append("embedding=?"); params.append(_encode_vec(embedding))
     if not sets:
         return False

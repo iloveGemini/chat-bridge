@@ -74,6 +74,7 @@ def build_injected_memory(session, query_text):
     cur_p = getattr(session, "current_place", GENESIS_SCENE["place"])
     lore_scan = f"{query_text or ''} {cur_p} {cur_t}"
     lore_scopes, _ = _resolve_session_worldbooks(session)
+    _before = []
     result = memory_store.build_memory_context(
         scope,
         session.session_id,
@@ -86,6 +87,7 @@ def build_injected_memory(session, query_text):
         lore_sem_threshold=mcfg.get("lore_sem_threshold", 0.40),
         lore_warm_rounds=mcfg.get("lore_warm_rounds", 2),
         lore_scopes=lore_scopes,
+        before_out=_before,
         diag=diag,
     )
     # 主动召回（场景切换触发）：到了新场景，挑一条长期沉底的相关设定/回忆，
@@ -123,7 +125,7 @@ def build_injected_memory(session, query_text):
             log_print(memory_store.format_recall_log(diag))
         except Exception as e:
             log_print(f"🧠 [recall_log 失败]: {e}")
-    return result
+    return {"before": "\n\n".join(_before), "after": result}
 
 
 SUMMARY_SYSTEM_PROMPT = """你是记忆分析师。对比【已有记忆状态】与【新对话】，只提取新对话里【新增】的、能改变未来互动方式的信息；严格增量，绝不重复已有内容。只输出一个 JSON 对象，不要任何解释或代码围栏。
