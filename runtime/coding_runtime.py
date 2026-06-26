@@ -1002,7 +1002,7 @@ def run_spawn_subagents(task, args, emit=None):
 # 主循环：跑一个 agent 回合
 # ---------------------------------------------------------------------------
 MAX_TOOL_ROUNDS = 99
-RECENT_TURNS = 12
+RECENT_TURNS = 100
 
 
 def run_agent_turn(task_id, user_msg, on_event=None):

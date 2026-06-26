@@ -202,20 +202,86 @@ class CodeAgentView {
   }
 
   // 把一个后端 turn 映射进本地 messages
+  // 后端 turn 结构（runtime/coding_runtime.add_turn）：
+  //   { id, role, type, content, tool_name, ts }
+  // 关键：tool_call / tool_result 的 role 也是 "assistant"，所以必须
+  //   先按 type 分派，最后才落到「普通 assistant 文本」分支，
+  //   否则工具调用会被当成空文本吞掉、永远不显示。
   ingestTurn(t) {
     this._lastTurnId = Math.max(this._lastTurnId, t.id || 0);
-    if (t.role === "user" && t.type === "text") {
-      this.messages.push({ role: "user", text: t.content });
-    } else if (t.type === "reasoning") {
+    const type = t.type;
+
+    if (type === "tool_call") {
+      // content = JSON 字符串 {"name": ..., "args": {...}}
+      let payload = t.content;
+      if (typeof payload === "string") {
+        try {
+          payload = JSON.parse(payload);
+        } catch (e) {
+          payload = {};
+        }
+      }
+      payload = payload || {};
+      const name = payload.name || t.tool_name || "";
+      const args = payload.args || {};
+      this.messages.push({
+        role: "tool",
+        toolName: name,
+        cmd: this._fmtToolCall(name, args),
+        result: "执行中...",
+        pending: true,
+        isError: false,
+      });
+      return;
+    }
+
+    if (type === "tool_result") {
+      // content = JSON 字符串（工具返回值）；按 FIFO 配对最早一个同名 pending 调用
+      let parsedRes = null;
+      const raw = typeof t.content === "string" ? t.content : JSON.stringify(t.content);
+      try {
+        parsedRes = typeof t.content === "string" ? JSON.parse(t.content) : t.content;
+      } catch (e) {
+        parsedRes = null;
+      }
+      const isError = !!(parsedRes && parsedRes.error);
+      const resultText = this._fmtToolResult(parsedRes, raw);
+
+      const pending = this.messages.find(
+        (m) =>
+          m.role === "tool" &&
+          m.pending &&
+          (m.toolName === t.tool_name || !t.tool_name),
+      );
+      if (pending) {
+        pending.result = resultText;
+        pending.pending = false;
+        pending.isError = isError;
+      } else {
+        // 没找到配对的调用（历史不完整）：单独显示结果
+        this.messages.push({
+          role: "tool",
+          toolName: t.tool_name,
+          cmd: t.tool_name ? this._fmtToolCall(t.tool_name, {}) : "(tool)",
+          result: resultText,
+          pending: false,
+          isError,
+        });
+      }
+      return;
+    }
+
+    if (type === "reasoning") {
       this.messages.push({ role: "thinking", text: t.content, time: "" });
-    } else if (t.type === "clarification_card") {
+      return;
+    }
+
+    if (type === "clarification_card") {
       let args = {};
       try {
         args = JSON.parse(t.content);
       } catch (e) {
-        try {
-          args = t.content; // 如果JSON解析失败，直接使用content
-        } catch (e2) {}
+        args = t.content || {};
       }
       this.messages.push({
         role: "clarification",
@@ -223,6 +289,18 @@ class CodeAgentView {
         pending: true,
         tool: t.tool_name,
       });
+      return;
+    }
+
+    // type === "text"（或其它）：按 role 区分用户 / 系统 / AI
+    if (type === "text" || !type) {
+      if (t.role === "user") {
+        this.messages.push({ role: "user", text: t.content });
+      } else if (t.role === "system" || t.role === "sys") {
+        this.messages.push({ role: "sys", text: t.content });
+      } else if (t.content && t.content.trim()) {
+        this.messages.push({ role: "ai", text: t.content });
+      }
     }
   }
 
