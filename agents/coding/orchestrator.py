@@ -72,8 +72,8 @@ class CodingOrchestrator(BaseManager):
         except Exception:
             return ""
 
-    def _build_handoff(self, phase, user_msg):
-        d = self.state.data
+    def _build_handoff(self, phase, user_msg, shared):
+        d = shared
         goal = (self.task or {}).get("goal") or ""
         base = f"【原始需求】\n{user_msg or goal or '(沿用既有任务目标)'}"
         if phase == "plan":
@@ -107,6 +107,47 @@ class CodingOrchestrator(BaseManager):
                 "若有失败请在结尾输出 [CHECK_FAIL] 并附上关键报错日志。"
             )
         return base
+
+    # ---------- FlowManager 钩子：相位流转（在 ctx.shared 上自治） ----------
+    def entry(self, ctx):
+        cyc = int(self.state.get("cycle", 0) or 0)
+        ctx.shared["cycle"] = cyc
+        if cyc >= MAX_CYCLES:
+            ctx.shared["_exhausted"] = True
+            return None
+        self._emit("cycle", {"cycle": cyc})
+        return PHASE_SEQUENCE[0]
+
+    def advance(self, ctx, last_step, last_result=None):
+        if last_step != "check":
+            return PHASE_SEQUENCE[PHASE_SEQUENCE.index(last_step) + 1]
+        if ctx.shared.get("_check_passed"):
+            return None  # check 通过：done 已在 _capture 置位
+        cyc = ctx.shared["cycle"] + 1
+        ctx.shared["cycle"] = cyc
+        self.state.set("cycle", cyc)
+        if cyc >= MAX_CYCLES:
+            ctx.shared["_exhausted"] = True
+            return None
+        self._emit("cycle", {"cycle": cyc})
+        return PHASE_SEQUENCE[0]
+
+    def _capture(self, ctx, phase, text):
+        if phase == "plan":
+            ctx.shared["plan_text"] = text; self.state.set("plan_text", text)
+        elif phase == "search":
+            ctx.shared["search_text"] = text; self.state.set("search_text", text)
+        elif phase == "code":
+            ctx.shared["diffs_text"] = text; self.state.set("diffs_text", text)
+        elif phase == "check":
+            passed = ("[CHECK_PASS]" in text) and ("[CHECK_FAIL]" not in text)
+            ctx.shared["_check_passed"] = passed
+            if passed:
+                ctx.shared["done"] = True
+                ctx.shared["final_text"] = text
+            else:
+                ctx.shared["last_error"] = text or "(验证未通过且无明确报错)"
+                self.state.set("last_error", ctx.shared["last_error"])
 
     def _run_phase(self, phase, handoff):
         # 路由到该相位的注册叶子节点；运行时依赖与 handoff 经 ctx.shared 交接，
@@ -165,65 +206,54 @@ class CodingOrchestrator(BaseManager):
 
             self.state.set_phase("plan")
 
+            ctx = AgentContext(
+                task_id=self.task_id, user_msg=user_msg,
+                on_event=self._on_event, shared={},
+            )
+            # 从持久化状态播种 ctx.shared（断点续跑时承接上轮上下文）
+            for _k in ("plan_text", "search_text", "diffs_text", "last_error"):
+                ctx.shared[_k] = self.state.get(_k, "") or ""
+
             final_text = ""
             done = False
             waiting_user = False
             interrupted = False
 
-            cycle = int(self.state.get("cycle", 0) or 0)
-            while cycle < MAX_CYCLES:
-                self._emit("cycle", {"cycle": cycle})
-                restart_cycle = False
-
-                for phase in PHASE_SEQUENCE:
-                    if agent._check_cancel(self.task_id):
-                        interrupted = True
-                        break
-                    injected = agent._drain_queue(self.task_id)
-
-                    self.state.set_phase(phase)
-                    self._emit("phase", {"phase": phase, "role": PHASE_TO_ROLE[phase]})
-
-                    handoff = self._build_handoff(phase, user_msg)
-                    if injected:
-                        handoff += "\n\n【用户追加/修改需求，请纳入考虑】\n" + "\n".join(injected)
-
-                    res = self._run_phase(phase, handoff)
-
-                    if res.get("cancelled"):
-                        interrupted = True
-                        break
-                    if res.get("clarify"):
-                        waiting_user = True
-                        final_text = "（已推送需求确认卡，等待你的选择/补充。）"
-                        break
-
-                    text = res.get("text", "") or ""
-                    if phase == "plan":
-                        self.state.set("plan_text", text)
-                    elif phase == "search":
-                        self.state.set("search_text", text)
-                    elif phase == "code":
-                        self.state.set("diffs_text", text)
-                    elif phase == "check":
-                        passed = ("[CHECK_PASS]" in text) and ("[CHECK_FAIL]" not in text)
-                        if passed:
-                            done = True
-                            final_text = text
-                        else:
-                            self.state.set("last_error", text or "(验证未通过且无明确报错)")
-                            restart_cycle = True
-
-                if interrupted or waiting_user or done:
+            step = self.entry(ctx)
+            while step is not None:
+                if agent._check_cancel(self.task_id):
+                    interrupted = True
                     break
-                if restart_cycle:
-                    cycle += 1
-                    self.state.set("cycle", cycle)
-                    continue
-                final_text = final_text or "（流水线已跑完一轮，请查看进度并指示下一步。）"
-                break
-            else:
-                final_text = "（已达最大循环次数，验证仍未通过，暂停等待你的指示。）"
+                injected = agent._drain_queue(self.task_id)
+
+                self.state.set_phase(step)
+                self._emit("phase", {"phase": step, "role": PHASE_TO_ROLE[step]})
+
+                handoff = self._build_handoff(step, user_msg, ctx.shared)
+                if injected:
+                    handoff += "\n\n【用户追加/修改需求，请纳入考虑】\n" + "\n".join(injected)
+
+                res = self._run_phase(step, handoff)
+
+                if res.get("cancelled"):
+                    interrupted = True
+                    break
+                if res.get("clarify"):
+                    waiting_user = True
+                    final_text = "（已推送需求确认卡，等待你的选择/补充。）"
+                    break
+
+                self._capture(ctx, step, res.get("text", "") or "")
+                step = self.advance(ctx, step)
+
+            if not (interrupted or waiting_user):
+                if ctx.shared.get("done"):
+                    done = True
+                    final_text = ctx.shared.get("final_text", "")
+                elif ctx.shared.get("_exhausted"):
+                    final_text = "（已达最大循环次数，验证仍未通过，暂停等待你的指示。）"
+                else:
+                    final_text = final_text or "（流水线已跑完一轮，请查看进度并指示下一步。）"
 
             if interrupted:
                 final_text = final_text or "（已被用户中断，已保存当前进度，可继续指示。）"
