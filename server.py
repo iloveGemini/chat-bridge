@@ -4,20 +4,18 @@ Usage: python server.py [port]
 """
 
 import base64
-import hashlib
 import http.server
 import json
-import re
 import shutil
 import sys
 import threading
 import time
-import urllib.error
 import urllib.request
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import agent  # 独立的 Code Agent 模块（自驱工具循环 + 沙箱工作区 + 进度卡）
+
 try:
     # 新的 5 阶段 Coding Orchestrator（agent.py 退化为其底层能力库）
     from agents.coding.orchestrator import run_coding_task as _run_coding_orchestrator
@@ -25,13 +23,10 @@ except Exception as _e:  # 导入失败不影响旧路径，网关会自动回�
     _run_coding_orchestrator = None
     print(f"[warn] Coding Orchestrator 未加载，回退到 agent.run_agent_turn: {_e}")
 import memory_store
-import notify
 import scheduler
-import tooling
 
 # API_REQUEST_TIMESTAMPS 迁至 chat.llm（聊天限流，仅其内部用）
 
-# Windows 终端 GBK 编码兼容：强制 UTF-8 输出，避免 emoji 导致 UnicodeEncodeError
 # Windows 终端 GBK 编码兼容：强制 UTF-8 输出，避免 emoji 导致 UnicodeEncodeError
 if sys.platform == "win32":
     import io
@@ -45,42 +40,62 @@ if sys.platform == "win32":
 
 # 路径常量 / 配置单例 / 网络工具 已抽离到 core/ 包，这里导入回本模块命名空间，
 # 既让本文件内的裸名引用（PORT/config/log_print…）继续可用，也保持 server.xxx 的向后兼容。
-from core.paths import (
-    PORT, ROOT, DATA_DIR, SESSIONS_DIR, PROMPTS_DIR, PRESETS_DIR,
-    ARCHIVE_DIR, UPLOAD_DIR, CONFIG_FILE, MEMORY_DB, JOBS_DB, TTS_DIR,
-)
-from core.net import log_print, _http_post_json, _safe_decode, _safe_name, _extract_json
-from core.config import (
-    config, config_lock,
-    load_config as _load_config, save_config as _save_config,
-    _auth_cfg, _auth_enabled, _auth_token_for, _expected_token,
-)
-from session.session import (
-    ChatSession, get_session, sessions_map, global_pending_event,
-    _session_scope, _resolve_session_worldbooks,
-    GENESIS_SCENE, SESSION_BINDING_KEYS,
-)
-from chat.scene import _scene_stamp, build_scene_block
-from chat.envelope import parse_msg_envelope, ingest_reply
-from chat.tts import _tts_cfg, _strip_narration, synth_tts, _attach_tts, _character_voice
-from chat.notify import _detect_lan_ip, _resolved_notify_cfg, _push_notify, set_lan_base
-from chat.outreach import (
-    _get_last_user_ts, _generate_proactive_message, _fire_outreach,
-    _outreach_enabled, _outreach_tool_defs, _parse_when, _exec_outreach_tool,
-)
-from session.tools import get_session_tools, set_session_tools
-from chat.llm import call_llm_api
 import routes
-from prompts.prompts import (
-    _read_prompt_content, _resolve_preset, _get_display_name, _apply_macros,
-    build_header_prompt, build_tail_anchor,
+from chat.envelope import ingest_reply
+from chat.llm import call_llm_api
+from chat.notify import _detect_lan_ip, _push_notify, _resolved_notify_cfg, set_lan_base
+from chat.outreach import (
+    _fire_outreach,
+    _get_last_user_ts,
+    _parse_when,
+)
+from chat.scene import _scene_stamp
+from chat.tts import _character_voice, _tts_cfg, synth_tts
+from core.config import (
+    _auth_cfg,
+    _auth_enabled,
+    _expected_token,
+    config,
+    config_lock,
+)
+from core.config import (
+    load_config as _load_config,
+)
+from core.config import (
+    save_config as _save_config,
+)
+from core.net import _safe_decode, _safe_name, log_print
+from core.paths import (
+    ARCHIVE_DIR,
+    DATA_DIR,
+    JOBS_DB,
+    MEMORY_DB,
+    PORT,
+    PRESETS_DIR,
+    PROMPTS_DIR,
+    ROOT,
+    SESSIONS_DIR,
+    UPLOAD_DIR,
 )
 from memory.memory import (
-    _embed_cfg, _memory_cfg, embed_texts, embed_query, _lore_embedding,
-    build_injected_memory, run_summary, summarize_session, _needs_summary,
-    _summ_meta, _set_summ_meta, _summ_batch, _migrate_legacy_memory,
-    SUMMARY_SYSTEM_PROMPT,
+    _lore_embedding,
+    _migrate_legacy_memory,
+    _needs_summary,
+    build_injected_memory,
+    embed_query,
+    summarize_session,
 )
+from prompts.prompts import (
+    _get_display_name,
+)
+from session.session import (
+    SESSION_BINDING_KEYS,
+    _session_scope,
+    get_session,
+    global_pending_event,
+    sessions_map,
+)
+from session.tools import get_session_tools, set_session_tools
 
 # LAN_BASE 已迁至 chat.notify（get_lan_base/set_lan_base）
 
