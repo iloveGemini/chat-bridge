@@ -347,7 +347,7 @@ def get_coding_tools():
             "type": "function",
             "function": {
                 "name": "smart_file_insight",
-                "description": "高级文件洞察工具。一次性获取文件的总行数，并同时搜索多个正则模式。等效于在终端同时运行 wc -l 和多次 grep，是快速了解陌生大文件的最佳手段！",
+                "description": "高级文件洞察工具。一次性获取文件总行数，并同时搜索多个正则模式；可带上下文行(context)看命中行前后，可用 offset 翻页看更多命中。等效于在终端同时跑 wc -l 与多次 grep -n -C，是快速摸清陌生大文件的最佳手段！",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -356,7 +356,10 @@ def get_coding_tools():
                             "type": "array",
                             "items": {"type": "string"},
                             "description": "要同时搜索的多个关键字或正则表达式列表。例如 ['思考|reasoning', 'timestamp|time']"
-                        }
+                        },
+                        "context": {"type": "integer", "description": "每个命中行额外显示的上下文行数(前后各 N 行，类似 grep -C)，默认 0，最大 10。命中行以 '>' 标记。"},
+                        "offset": {"type": "integer", "description": "翻页用：跳过每个模式的前 N 个命中再开始显示，默认 0。"},
+                        "max_matches": {"type": "integer", "description": "每个模式最多显示多少个命中，默认 30，最大 200。"}
                     },
                     "required": ["filepath", "patterns"]
                 }

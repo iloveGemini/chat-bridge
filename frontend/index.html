@@ -639,6 +639,64 @@
         ></div>
       </div>
 
+      <!-- Agent 提示词预设：列表 -->
+      <div id="agent-prompts-view" class="level-2-view">
+        <div class="header">
+          <div class="back-btn" onclick="router.popView()">
+            <svg viewBox="0 0 24 24" width="24" height="24">
+              <path
+                d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z"
+                fill="currentColor"
+              />
+            </svg>
+          </div>
+          <div
+            style="
+              flex: 1;
+              text-align: center;
+              padding-right: 40px;
+              font-weight: 600;
+            "
+          >
+            Agent 提示词
+          </div>
+        </div>
+        <div
+          class="content"
+          id="agent-prompts-content"
+          style="background: var(--bg-color)"
+        ></div>
+      </div>
+
+      <!-- Agent 提示词预设：单个 agent 详情/编辑 -->
+      <div id="agent-prompt-detail-view" class="level-2-view">
+        <div class="header">
+          <div class="back-btn" onclick="router.popView()">
+            <svg viewBox="0 0 24 24" width="24" height="24">
+              <path
+                d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z"
+                fill="currentColor"
+              />
+            </svg>
+          </div>
+          <div
+            style="
+              flex: 1;
+              text-align: center;
+              padding-right: 40px;
+              font-weight: 600;
+            "
+          >
+            配置 Agent 提示词
+          </div>
+        </div>
+        <div
+          class="content"
+          id="agent-prompt-detail-content"
+          style="background: var(--bg-color)"
+        ></div>
+      </div>
+
       <!-- 全局世界书管理：列表 -->
       <div id="worldbooks-view" class="level-2-view">
         <div class="header">

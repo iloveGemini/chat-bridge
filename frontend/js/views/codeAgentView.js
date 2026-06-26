@@ -21,6 +21,7 @@ class CodeAgentView {
     this._pollTimer = null;
     this.workspaceTree = "";
     this.pinnedContext = [];
+    this._nearBottom = true; // 用户是否贴在底部：决定新内容来时要不要自动滚屏
   }
 
   els() {
@@ -129,6 +130,17 @@ class CodeAgentView {
       e.localFileInput.value = "";
     });
 
+    // 监听滚动：用户往上翻看历史时记下「不在底部」，避免轮询来新内容时把他拽回底部
+    e.scroll.addEventListener(
+      "scroll",
+      () => {
+        const el = e.scroll;
+        this._nearBottom =
+          el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      },
+      { passive: true },
+    );
+
     e.scroll.addEventListener("click", (ev) => {
       if (ev.target.classList.contains("clarify-submit-btn")) {
         const card = ev.target.closest(".terminal-msg");
@@ -198,7 +210,7 @@ class CodeAgentView {
       });
     }
     this.renderAll();
-    this.scrollToBottom();
+    this.scrollToBottom(true);
   }
 
   // 把一个后端 turn 映射进本地 messages
@@ -610,6 +622,7 @@ class CodeAgentView {
     e.input.value = "";
     e.input.style.height = "auto";
 
+    this._nearBottom = true; // 用户自己发了消息，跟随到底部展示
     this.generating = true;
     this._refreshSendBtn();
     this.updateTask("提交中...", 5);
@@ -688,7 +701,7 @@ class CodeAgentView {
       if (window.vConsole) {
         window.vConsole.show();
         window.vConsole.log(
-          `===== last_llm_payload  round=${lp.round}  model=${lp.model}  @${lp.ts} =====`,
+          `===== last_llm_payload  phase=${lp.phase ?? "-"}  round=${lp.round ?? "-"}  model=${lp.model}  @${lp.ts} =====`,
           "#ffae57",
         );
         (lp.messages || []).forEach((m, i) => {
@@ -786,10 +799,16 @@ class CodeAgentView {
     e.scroll.innerHTML = html;
   }
 
-  scrollToBottom() {
+  // force=true：无视用户当前滚动位置强制到底（如刚加载/用户自己发了消息）；
+  // 否则只有当用户本来就贴在底部时才自动跟随，防止打断向上翻看历史。
+  scrollToBottom(force = false) {
+    if (!force && !this._nearBottom) return;
     requestAnimationFrame(() => {
       const e = this.els();
-      if (e.scroll) e.scroll.scrollTop = e.scroll.scrollHeight;
+      if (e.scroll) {
+        e.scroll.scrollTop = e.scroll.scrollHeight;
+        this._nearBottom = true;
+      }
     });
   }
 

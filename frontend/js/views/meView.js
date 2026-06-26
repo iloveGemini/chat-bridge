@@ -84,6 +84,10 @@ class MeView {
           <span class="label"><span style="color:var(--text-secondary);display:flex;">${ICONS.branch}</span>预设分支</span>
           <span class="val"></span>
         </div>
+        <div class="ios-item" id="me-agent-prompts">
+          <span class="label"><span style="color:var(--text-secondary);display:flex;">${ICONS.branch}</span>Agent 提示词</span>
+          <span class="val"></span>
+        </div>
         <div class="ios-item" id="me-memory">
           <span class="label"><span style="color:var(--text-secondary);display:flex;">${ICONS.savePoint}</span>记忆存档</span>
           <span class="val">正常</span>
@@ -131,6 +135,7 @@ class MeView {
 
     // 常规绑定
     this.container.querySelector('#me-presets').onclick = () => import('./presetsView.js').then(m => m.presetsView.open());
+    this.container.querySelector('#me-agent-prompts').onclick = () => import('./agentPromptsView.js').then(m => m.agentPromptsView.open());
     this.container.querySelector('#me-lore').onclick = () => import('./worldbooksView.js').then(m => m.worldbooksView.open());
     this.container.querySelector('#me-engine').onclick = () => import('./engineSettingsView.js').then(m => m.engineSettingsView.open());
     this.container.querySelector('#me-ui').onclick = () => import('./uiSettingsView.js').then(m => m.uiSettingsView.open());

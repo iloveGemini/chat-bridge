@@ -488,3 +488,95 @@ def _get_prompts_get(h, query, session, session_id):
         h._json({"ok": False})
     return
 
+
+# ==================== Agent 提示词预设 ====================
+# 动态从 agent 注册表读取「有可编辑系统提示词」的 agent；新增 agent 实现
+# prompt_descriptor() 即自动出现，无需改这些路由或前端。
+from prompts import agent_prompts as _ap
+
+_AGENT_LABELS = {
+    "planner": "规划者 Planner",
+    "searcher": "侦察兵 Searcher",
+    "coder": "编码 Coder",
+    "writer": "落地 Writer",
+    "checker": "验证 Checker",
+}
+
+
+def _agent_descriptors():
+    """{prompt_id: default_text}，从已注册 agent 的 prompt_descriptor() 收集。"""
+    for _m in ("agents.coding.phase", "agents.rp.agent"):
+        try:
+            __import__(_m)  # 确保叶子已注册
+        except Exception:
+            pass
+    from agents.base import all_agent_types, get_agent
+
+    out = {}
+    for t in all_agent_types():
+        ag = get_agent(t)
+        if not ag:
+            continue
+        try:
+            desc = ag.prompt_descriptor()
+        except Exception:
+            desc = None
+        if not desc:
+            continue
+        pid, default_text = desc
+        out.setdefault(pid, default_text)
+    return out
+
+
+@get("/api/agents/prompts")
+def _get_agents_prompts(h, query, session, session_id):
+    descs = _agent_descriptors()
+    agents = []
+    for pid in sorted(descs):
+        info = _ap.list_presets(pid, descs[pid])
+        agents.append({
+            "agent": pid,
+            "label": _AGENT_LABELS.get(pid, pid),
+            "active": info["active"],
+            "presets": info["presets"],
+        })
+    h._json({"ok": True, "agents": agents})
+    return
+
+
+@get("/api/agent_prompt")
+def _get_agent_prompt(h, query, session, session_id):
+    agent = query.get("agent", [""])[0]
+    preset = query.get("preset", [""])[0]
+    descs = _agent_descriptors()
+    if agent not in descs:
+        h._json({"ok": False, "error": "未知 agent"})
+        return
+    h._json({"ok": True, "content": _ap.get_content(agent, preset, descs[agent])})
+    return
+
+
+@post("/api/agent_prompt/save")
+def _agent_prompt_save(h, query, session, session_id):
+    length = int(h.headers.get("Content-Length", 0))
+    data = json.loads(_safe_decode(h.rfile.read(length)))
+    ok, err = _ap.save_preset(
+        data.get("agent", ""), data.get("name", ""), data.get("content", "")
+    )
+    h._json({"ok": ok, "error": err})
+
+
+@post("/api/agent_prompt/delete")
+def _agent_prompt_delete(h, query, session, session_id):
+    length = int(h.headers.get("Content-Length", 0))
+    data = json.loads(_safe_decode(h.rfile.read(length)))
+    h._json({"ok": _ap.delete_preset(data.get("agent", ""), data.get("name", ""))})
+
+
+@post("/api/agent_prompt/select")
+def _agent_prompt_select(h, query, session, session_id):
+    length = int(h.headers.get("Content-Length", 0))
+    data = json.loads(_safe_decode(h.rfile.read(length)))
+    ok = _ap.select_preset(data.get("agent", ""), data.get("preset", ""))
+    h._json({"ok": ok})
+

@@ -239,12 +239,14 @@ export async function openPresetEditor(name, tree, onDone) {
     <textarea class="sheet-textarea ps-slot-content" id="ps-${slot}-content" placeholder="该组成部分的正文内容" style="width:100%;min-height:120px;margin-bottom:6px;box-sizing:border-box;">加载中...</textarea>
     <div style="display:flex;justify-content:flex-end;margin-bottom:16px;"><button class="p-btn ps-slot-save" data-slot="${slot}">保存此段内容</button></div>`;
 
-  const ofRows = ofCatalog.map(f => `
+  const ofRowHtml = (f) => `
     <div class="ios-item" style="background:var(--bg);">
-      <span class="label" style="font-size:14px;">${escHtml(f.label || f.key)}${f.custom ? ' <span style="font-size:10px;color:var(--text-faint);">自定义</span>' : ''}
-        <div style="font-size:11px;color:var(--text-secondary);font-weight:normal;margin-top:2px;">${escHtml(f.desc || '')}</div></span>
+      <span class="label" style="font-size:14px;flex:1;">${escHtml(f.label || f.key)}${f.custom ? ' <span style="font-size:10px;color:var(--text-faint);">自定义</span>' : ''}
+        <div style="font-size:11px;color:var(--text-secondary);font-weight:normal;margin-top:2px;">${escHtml(f.desc || '')}</div>
+        ${f.custom ? `<div style="margin-top:4px;"><a href="javascript:void(0)" class="ps-of-edit" data-key="${escHtml(f.key)}" style="font-size:11px;color:var(--active-color);margin-right:12px;">编辑</a><a href="javascript:void(0)" class="ps-of-del" data-key="${escHtml(f.key)}" style="font-size:11px;color:#ff3b30;">删除</a></div>` : ''}
+      </span>
       <label class="switch"><input type="checkbox" class="ps-of-chk" data-key="${escHtml(f.key)}" ${ofEnabled.has(f.key) ? 'checked' : ''}><span class="slider"></span></label>
-    </div>`).join('');
+    </div>`;
 
   contentEl.innerHTML = `
     <div class="form-group" style="margin-bottom:12px;">
@@ -261,11 +263,78 @@ export async function openPresetEditor(name, tree, onDone) {
     ${SLOTS.map(([s, l]) => slotBlock(s, l)).join('')}
 
     <div class="sheet-section-label">输出格式 (output_format)</div>
-    <div style="font-size:12px;color:var(--text-secondary);line-height:1.5;margin-bottom:6px;">勾选这套预设默认启用的格式条目；会话可整套覆盖。</div>
-    <div class="ios-group" style="margin-top:0;">${ofRows || '<div style="padding:12px 16px;color:var(--text-secondary);font-size:13px;">暂无条目</div>'}</div>
+    <div style="font-size:12px;color:var(--text-secondary);line-height:1.5;margin-bottom:6px;">勾选这套预设默认启用的格式条目；会话可整套覆盖。内置条目不可改，自定义条目可编辑/删除。</div>
+    <div class="ios-group" id="ps-of-group" style="margin-top:0;"></div>
+    <div style="display:flex;justify-content:flex-end;margin:8px 0 4px;"><button class="p-btn" id="ps-of-add" type="button">＋ 新增自定义格式</button></div>
+    <div id="ps-of-editor"></div>
 
     ${(name && name !== 'default') ? `<div style="text-align:center;margin-top:20px;"><button class="edit-btn-cancel" id="ps-del" style="color:#ff3b30;background:transparent;width:100%;">删除此预设</button></div>` : ''}
   `;
+
+  // ---- output_format 条目：渲染 + 新增/编辑/删除（内置只读，自定义可改）----
+  const syncOfEnabled = () => {
+    contentEl.querySelectorAll('.ps-of-chk').forEach(ch => {
+      if (ch.checked) ofEnabled.add(ch.dataset.key); else ofEnabled.delete(ch.dataset.key);
+    });
+  };
+  const renderOF = () => {
+    const g = contentEl.querySelector('#ps-of-group');
+    if (!g) return;
+    syncOfEnabled(); // 重渲染前先记住用户当前的勾选态，避免丢失
+    g.innerHTML = ofCatalog.length ? ofCatalog.map(ofRowHtml).join('')
+      : '<div style="padding:12px 16px;color:var(--text-secondary);font-size:13px;">暂无条目</div>';
+    g.querySelectorAll('.ps-of-edit').forEach(aEl =>
+      aEl.onclick = () => openOfEditor(ofCatalog.find(f => f.key === aEl.dataset.key)));
+    g.querySelectorAll('.ps-of-del').forEach(aEl => aEl.onclick = async () => {
+      if (!confirm(`删除自定义格式「${aEl.dataset.key}」？`)) return;
+      const r = await api.outputFormatDelete(aEl.dataset.key);
+      if (r && r.ok) {
+        ofCatalog = ofCatalog.filter(f => f.key !== aEl.dataset.key);
+        ofEnabled.delete(aEl.dataset.key);
+        renderOF(); showToast('已删除');
+      } else showToast('删除失败');
+    });
+  };
+  const openOfEditor = (f) => {
+    const ed = contentEl.querySelector('#ps-of-editor');
+    if (!ed) return;
+    const isNew = !f;
+    f = f || { key: '', label: '', desc: '', fragment: '', tag: '' };
+    ed.innerHTML = `
+      <div class="ios-group" style="margin:8px 0;padding:10px;">
+        <input class="sheet-input ofe-key" placeholder="key（英文唯一标识）" value="${escHtml(f.key)}" ${isNew ? '' : 'disabled'} style="margin-bottom:6px;">
+        <input class="sheet-input ofe-label" placeholder="显示名" value="${escHtml(f.label || '')}" style="margin-bottom:6px;">
+        <input class="sheet-input ofe-desc" placeholder="简介（一句话）" value="${escHtml(f.desc || '')}" style="margin-bottom:6px;">
+        <input class="sheet-input ofe-tag" placeholder="tag（可选）" value="${escHtml(f.tag || '')}" style="margin-bottom:6px;">
+        <textarea class="sheet-textarea ofe-frag" placeholder="fragment：注入提示词的格式规范正文" style="width:100%;min-height:120px;box-sizing:border-box;margin-bottom:6px;">${escHtml(f.fragment || '')}</textarea>
+        <div style="display:flex;gap:8px;justify-content:flex-end;">
+          <button class="p-del ofe-cancel" type="button">取消</button>
+          <button class="p-btn ofe-save" type="button">保存条目</button>
+        </div>
+      </div>`;
+    ed.querySelector('.ofe-cancel').onclick = () => { ed.innerHTML = ''; };
+    ed.querySelector('.ofe-save').onclick = async () => {
+      const key = ed.querySelector('.ofe-key').value.trim();
+      const fragment = ed.querySelector('.ofe-frag').value;
+      if (!key) { showToast('key 必填'); return; }
+      if (!fragment.trim()) { showToast('fragment 必填'); return; }
+      const payload = {
+        key, label: ed.querySelector('.ofe-label').value.trim(),
+        desc: ed.querySelector('.ofe-desc').value.trim(),
+        fragment, tag: ed.querySelector('.ofe-tag').value.trim(),
+      };
+      const r = await api.outputFormatSave(payload);
+      if (r && r.ok) {
+        const idx = ofCatalog.findIndex(x => x.key === key);
+        const item = { ...payload, custom: true };
+        if (idx >= 0) ofCatalog[idx] = { ...ofCatalog[idx], ...item }; else ofCatalog.push(item);
+        ed.innerHTML = ''; renderOF(); showToast('已保存');
+      } else showToast((r && r.error) || '保存失败');
+    };
+  };
+  renderOF();
+  const ofAddBtn = contentEl.querySelector('#ps-of-add');
+  if (ofAddBtn) ofAddBtn.onclick = () => openOfEditor(null);
 
   // 记录每个槽位当前加载到的显示名，保存内容时回填，避免清空 prompt 的 name 字段
   const dispNames = {};

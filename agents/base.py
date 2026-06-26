@@ -43,6 +43,13 @@ class BaseAgent:
         """该 agent_type 默认可用的工具名集合（§4 据此统一 RBAC）。"""
         return []
 
+    def prompt_descriptor(self):
+        """可被「Agent 提示词预设」管理的 agent 在此返回 (prompt_id, default_text)；
+        没有可编辑系统提示词的 agent（如纯编排器）返回 None。
+        prompt_id 是稳定的提示词标识（如 coding 角色名），default_text 是随程序发布的默认提示词。
+        前端按此动态列出可配置的 agent：新增 agent 实现本方法即可自动出现，无需改 UI。"""
+        return None
+
     def run(self, ctx: "AgentContext") -> "AgentResult":
         raise NotImplementedError
 

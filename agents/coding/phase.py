@@ -21,8 +21,8 @@ from agents.base import BaseAgent, AgentContext, AgentResult, register_agent
 CODING_ROLES = ("planner", "searcher", "coder", "writer", "checker")
 
 
-def load_role_prompt(role):
-    """统一加载：用户覆盖(data/prompts/coding/<role>.json 的 content) → md 系统默认兜底。"""
+def _role_base_default(role):
+    """该角色的「默认提示词」：旧版 data/prompts/coding/<role>.json 覆盖优先，否则随程序发布的 md。"""
     f = PROMPTS_DIR / "coding" / f"{role}.json"
     if f.exists():
         try:
@@ -32,6 +32,14 @@ def load_role_prompt(role):
         except Exception:
             pass
     return ROLE_PROMPTS.get(role, ROLE_PROMPTS["planner"])
+
+
+def load_role_prompt(role):
+    """统一加载：Agent 提示词预设(当前启用项) → 角色默认(.md/旧覆盖) 兜底。
+    用户在「Agent 提示词」里给该角色选了自定义预设时，这里返回那份正文，
+    从而经 build_phase_messages 注入系统提示词、真正传给模型。"""
+    from prompts import agent_prompts as _ap
+    return _ap.effective_prompt(role, _role_base_default(role))
 
 
 def build_phase_messages(role, handoff, workspace_tree=""):
@@ -63,12 +71,15 @@ def run_phase(role, handoff, *, chat_fn, tool_ctx, task_id,
                 pass
 
     def _on_content(content):
-        c = (content or "").strip()
+        # [NEED_USER] 是给编排器看的暂停标记，不展示给用户
+        c = (content or "").replace("[NEED_USER]", "").strip()
         if c:
             agent.add_turn(task_id, "assistant", "text", f"[{role}] {c}")
             _emit("assistant", f"[{role}] {c}")
 
     def _on_tool_call(name, args):
+        if name == "ask_user_clarification":
+            return  # 由 _intercept 落「确认卡」turn，避免再冒一个工具调用气泡
         agent.add_turn(task_id, "assistant", "tool_call",
                        {"name": name, "args": args}, tool_name=name)
         _emit("tool_call", {"name": name, "args": args})
@@ -76,8 +87,10 @@ def run_phase(role, handoff, *, chat_fn, tool_ctx, task_id,
     def _intercept(name, args):
         if name == "ask_user_clarification":
             _emit("clarification", args)
-            agent.add_turn(task_id, "assistant", "tool_result",
-                           json.dumps({"clarify": True}, ensure_ascii=False), tool_name=name)
+            # 落成前端可交互渲染的确认卡 turn（ingestTurn 认 type=clarification_card，
+            # content 是含 questions 的 JSON）。之前错存成 tool_result，所以前端看不见卡。
+            agent.add_turn(task_id, "assistant", "clarification_card",
+                           json.dumps(args, ensure_ascii=False), tool_name=name)
             return {"payload": args}
         return None
 
@@ -120,6 +133,10 @@ class CodingPhaseAgent(BaseAgent):
 
     def default_tool_grant(self):
         return ["coding"]
+
+    def prompt_descriptor(self):
+        # 每个 coding 相位角色都可被「Agent 提示词预设」管理，默认= 随程序发布的角色提示词
+        return (self.role, ROLE_PROMPTS.get(self.role, ROLE_PROMPTS["planner"]))
 
     def run(self, ctx: AgentContext) -> AgentResult:
         sh = ctx.shared or {}

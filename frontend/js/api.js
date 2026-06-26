@@ -87,6 +87,13 @@ class ApiService {
   outputFormatSession(sid) { return this.getS('/api/output_format/session', sid); }    // 会话覆盖态 + 生效集 + 目录
   outputFormatSessionSet(set, enabled, sid) { return this.postS('/api/output_format/session/set', { set, enabled }, sid); }
 
+  // ---- Agent 提示词预设（动态从 agent 注册表读取）----
+  agentsPrompts() { return this.get('/api/agents/prompts'); }                                  // 列出所有可配置 agent + 其预设 + 当前启用
+  agentPromptGet(agent, preset) { return this.get('/api/agent_prompt?agent=' + encodeURIComponent(agent) + '&preset=' + encodeURIComponent(preset || '')); }
+  agentPromptSave(agent, name, content) { return this.post('/api/agent_prompt/save', { agent, name, content }); }
+  agentPromptDelete(agent, name) { return this.post('/api/agent_prompt/delete', { agent, name }); }
+  agentPromptSelect(agent, preset) { return this.post('/api/agent_prompt/select', { agent, preset }); }
+
   // ---- 记忆 ----
   memoryOverview(sid) { return this.getS('/api/memory/overview', sid); }
   memorySummarize(sid) { return this.postS('/api/memory/summarize', {}, sid); }
@@ -134,6 +141,7 @@ class ApiService {
   agentEnqueue(task_id, text) { return this.post('/api/agent/enqueue', { task_id, text }); }
   fetchLogs(after) { return this.get('/api/logs?after=' + (after || 0)); }
   agentLastPrompt(id) { return this.get('/api/agent/last_prompt?id=' + encodeURIComponent(id)); }
+  debugLastPrompt(sid) { return this.getS('/api/debug/last_prompt', sid); }
   fsList(path) { return this.get('/api/fs/list?path=' + encodeURIComponent(path || '')); }
   agentContext(id) { return this.get('/api/agent/context?id=' + encodeURIComponent(id)); }
   agentFiles(id) { return this.get('/api/agent/files?id=' + encodeURIComponent(id)); }

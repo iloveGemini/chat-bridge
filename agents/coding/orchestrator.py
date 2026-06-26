@@ -35,6 +35,17 @@ PHASE_TO_ROLE = {
 }
 PHASE_SEQUENCE = ["plan", "search", "code", "write", "check"]
 
+# 每个相位用哪个逻辑端点：searcher/writer 是体力活(只读侦察/把 Diffs 落地)，
+# 交给便宜高 RPM 的 worker_api；planner/coder/checker 是脑力活，留给主模型 api。
+# worker_api 未配置时 _resolve_api 会自动回落到 summary_api / api，安全。
+PHASE_ENDPOINT = {
+    "plan": "api",
+    "search": "worker_api",
+    "code": "api",
+    "write": "worker_api",
+    "check": "api",
+}
+
 PHASE_MAX_ROUNDS = {
     "plan": 6,
     "search": 14,
@@ -55,9 +66,28 @@ class CodingOrchestrator(BaseManager):
         self.task = None
         self.ctx = None
         self._on_event = None
-        self._chat_fn = chat_fn or (lambda messages, tools: agent._chat(
-            "api", messages, tools=tools or None, temperature=0.3
-        ))
+        self._custom_chat = chat_fn  # 测试可注入；为 None 时按相位选逻辑端点
+
+    def _chat_for(self, endpoint):
+        """返回一个绑定到指定逻辑端点(api/worker_api/...)的 chat_fn。
+        searcher/writer 走便宜高 RPM 的 worker_api，省钱也省主模型额度。"""
+        custom = self._custom_chat
+
+        def _fn(messages, tools):
+            # 记录最近一次 payload，供前端「Last Prompt」调试按钮查看（两条路径统一）。
+            try:
+                agent.set_last_prompt(
+                    self.task_id, messages, phase=self.state.get("phase")
+                )
+            except Exception:
+                pass
+            if custom:
+                return custom(messages, tools)
+            return agent._chat(
+                endpoint, messages, tools=tools or None, temperature=0.3
+            )
+
+        return _fn
 
     def _emit(self, kind, data):
         if self._on_event:
@@ -157,7 +187,7 @@ class CodingOrchestrator(BaseManager):
             task_id=self.task_id,
             on_event=self._on_event,
             shared={
-                "chat_fn": self._chat_fn,
+                "chat_fn": self._chat_for(PHASE_ENDPOINT.get(phase, "api")),
                 "tool_ctx": self.ctx,
                 "workspace_tree": self._workspace_tree(),
                 "is_cancelled": lambda: agent._check_cancel(self.task_id),
@@ -244,6 +274,19 @@ class CodingOrchestrator(BaseManager):
                     break
 
                 self._capture(ctx, step, res.get("text", "") or "")
+
+                # 规划者还在收集需求/向用户提问（纯文字、没推确认卡）时，
+                # 它会在结尾打 [NEED_USER] 标记 -> 暂停等用户，别空跑后面 4 个相位。
+                if step == "plan":
+                    _pt = ctx.shared.get("plan_text", "") or ""
+                    if "[NEED_USER]" in _pt:
+                        waiting_user = True
+                        final_text = (
+                            _pt.replace("[NEED_USER]", "").strip()
+                            or "（规划者需要你补充需求后再继续。）"
+                        )
+                        break
+
                 step = self.advance(ctx, step)
 
             if not (interrupted or waiting_user):

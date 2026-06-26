@@ -134,6 +134,26 @@ def get_last_prompt(task_id):
         return _last_prompt.get(task_id)
 
 
+def set_last_prompt(task_id, messages, round_=None, model=None, phase=None):
+    """记录最近一次发给主模型的 payload。新版 Orchestrator 也走这里，
+    保证 /api/agent/last_prompt 在两条代码路径下都可用。"""
+    if not task_id:
+        return
+    try:
+        if model is None:
+            model = (load_config().get("api", {}) or {}).get("model", "")
+    except Exception:
+        model = model or ""
+    with _last_prompt_lock:
+        _last_prompt[task_id] = {
+            "ts": _now(),
+            "round": round_,
+            "phase": phase,
+            "model": model,
+            "messages": list(messages or []),
+        }
+
+
 def workspace_tree(task_id):
     """对外：返回某任务工作区的【目录】树文本（供前端面板展示，只列目录避免太长）。"""
     t = get_task(task_id)

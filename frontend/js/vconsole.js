@@ -1,4 +1,5 @@
 import { api } from "./api.js";
+import { store } from "./store.js";
 
 export class VConsole {
   constructor() {
@@ -10,6 +11,8 @@ export class VConsole {
 
     this.feedTimer = null;
     this._logSeq = 0; // 已拉取到的后端日志游标
+    this._side = localStorage.getItem("vconsole_side") || "right"; // 吸附在哪一侧
+    this._tuckTimer = null; // 空闲后把球缩进边缘的定时器
 
     // 动态创建 Prompt 按钮，追加到 Clear 按钮旁边
     if (this.btnClear && !document.getElementById("vc-prompt-btn")) {
@@ -24,27 +27,16 @@ export class VConsole {
         this.btnClear.nextSibling,
       );
 
-      this.btnPrompt.onclick = () => {
-        // 巧妙调用：直接触发 CodeAgentView 里现成的设置按钮点击事件
-        const agentSettingsBtn = document.getElementById("ca-settings-btn");
-        if (agentSettingsBtn) {
-          agentSettingsBtn.click();
-          this.log(
-            "[System] 已请求输出最后一次 Prompt，请查看下方日志",
-            "#56b6ff",
-          );
-        } else {
-          this.log(
-            "[System] 当前不在 Agent 界面，或未找到 Prompt 按钮",
-            "#ffae57",
-          );
-        }
-      };
+      this.btnPrompt.onclick = () => this.showLastPrompt();
     }
 
     if (this.fab) {
       this.initDraggable();
       this.syncVisibility();
+      // 鼠标移上去/触摸时探出来，移开一会儿后自动缩回边缘
+      this.fab.addEventListener("mouseenter", () => this.peekOut());
+      this.fab.addEventListener("mouseleave", () => this.scheduleTuck());
+      this.scheduleTuck(); // 初始就缩到边缘当个不打扰的小球
     }
     if (this.btnClose) this.btnClose.onclick = () => this.hide();
     if (this.btnClear) this.btnClear.onclick = () => this.clear();
@@ -54,6 +46,79 @@ export class VConsole {
     const enabled = localStorage.getItem("vconsole_en") === "1";
     if (this.fab) this.fab.style.display = enabled ? "flex" : "none";
     if (!enabled && this.panel.classList.contains("show")) this.hide();
+  }
+
+  // 把球缩到屏幕边缘，只露出一小半、半透明，不打扰阅读
+  tuck() {
+    if (!this.fab) return;
+    if (this.panel && this.panel.classList.contains("show")) return; // 面板开着时不缩
+    this.fab.style.transition = "transform 0.3s, opacity 0.3s";
+    const dir = this._side === "left" ? "-55%" : "55%";
+    this.fab.style.transform = `translateX(${dir})`;
+    this.fab.style.opacity = "0.4";
+  }
+
+  // 完整探出，恢复不透明
+  peekOut() {
+    if (!this.fab) return;
+    if (this._tuckTimer) {
+      clearTimeout(this._tuckTimer);
+      this._tuckTimer = null;
+    }
+    this.fab.style.transform = "translateX(0)";
+    this.fab.style.opacity = "1";
+  }
+
+  // 空闲若干秒后自动缩回边缘
+  scheduleTuck(delay = 2000) {
+    if (this._tuckTimer) clearTimeout(this._tuckTimer);
+    this._tuckTimer = setTimeout(() => this.tuck(), delay);
+  }
+
+  // 一键查看最近一次发给模型的 prompt：
+  // 在 Code Agent 界面 -> 拉 agent 的 payload；否则 -> 拉当前聊天会话的 /api/debug/last_prompt
+  async showLastPrompt() {
+    if (!this.panel.classList.contains("show")) this.show();
+    const agentView = document.getElementById("code-agent-view");
+    const inAgent = agentView && agentView.classList.contains("show");
+
+    if (inAgent) {
+      // 复用 CodeAgentView 里现成的输出逻辑
+      const btn = document.getElementById("ca-settings-btn");
+      if (btn) {
+        btn.click();
+        this.log("[System] 已请求 Code Agent 的最近 Prompt", "#56b6ff");
+      } else {
+        this.log("[System] 未找到 Agent 的 Prompt 按钮", "#ffae57");
+      }
+      return;
+    }
+
+    // 普通聊天：用当前激活会话拉调试 payload
+    const sid = (store.getState && store.getState().activeSessionId) || null;
+    if (!sid) {
+      this.log("[System] 当前没有激活的聊天会话", "#ffae57");
+      return;
+    }
+    try {
+      const lp = await api.debugLastPrompt(sid);
+      if (!lp || lp.error || !lp.messages) {
+        this.log(`[System] 该会话暂无 Prompt 记录（${sid}）`, "#ffae57");
+        return;
+      }
+      this.log(
+        `===== chat last_prompt  session=${sid}  model=${lp.model}  @${lp.ts} =====`,
+        "#ffae57",
+      );
+      (lp.messages || []).forEach((m, i) => {
+        const c =
+          typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+        this.log(`[#${i} ${m.role}] ${c}`, "#9cdcfe");
+      });
+      this.log(`===== end (${(lp.messages || []).length} 条) =====`, "#ffae57");
+    } catch (err) {
+      this.log("[System] 获取 Prompt 失败: " + err.message, "#ff5f56");
+    }
   }
 
   initDraggable() {
@@ -72,6 +137,7 @@ export class VConsole {
       isDragging = false;
       // 拖拽时取消动画过渡，跟随手指更紧密
       this.fab.style.transition = "none";
+      this.peekOut(); // 抓起来时先完整探出，方便操作
     };
 
     const handleMove = (x, y) => {
@@ -102,18 +168,22 @@ export class VConsole {
       if (isDragging) {
         // 松手时，计算悬浮球在中线的左侧还是右侧，自动吸附边缘
         this.fab.style.transition =
-          "left 0.3s cubic-bezier(0.25, 0.8, 0.25, 1)";
+          "left 0.3s cubic-bezier(0.25, 0.8, 0.25, 1), transform 0.3s, opacity 0.3s";
         const rect = this.fab.getBoundingClientRect();
         const centerX = rect.left + rect.width / 2;
 
         if (centerX < window.innerWidth / 2) {
           this.fab.style.left = "10px"; // 吸附到左边缘
+          this._side = "left";
         } else {
           this.fab.style.left = window.innerWidth - rect.width - 10 + "px"; // 吸附到右边缘
+          this._side = "right";
         }
+        localStorage.setItem("vconsole_side", this._side);
       }
       startX = 0;
       startY = 0;
+      this.scheduleTuck();
     };
 
     // 触摸屏事件绑定
@@ -150,6 +220,7 @@ export class VConsole {
   }
 
   show() {
+    this.peekOut(); // 面板打开时球完整显示，别缩着
     this.panel.classList.add("show");
     this.log("[System] vConsole 已挂载，开始接收后端日志…");
     this.startFeed();
@@ -158,6 +229,7 @@ export class VConsole {
   hide() {
     this.panel.classList.remove("show");
     this.stopFeed();
+    this.scheduleTuck(); // 关掉面板后球重新缩回边缘
   }
 
   clear() {
