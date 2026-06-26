@@ -186,3 +186,11 @@ def _resolve_session_worldbooks(session):
         ):
             ids.append(bid)
     return [memory_store.worldbook_scope(i) for i in ids], ids
+
+
+def _find_pending_session():
+    """跨会话扫描：返回第一个 pending_event 已置位的会话（claude_mode 长轮询用）。"""
+    for s in list(sessions_map.values()):
+        if s.pending_event.is_set():
+            return s
+    return None

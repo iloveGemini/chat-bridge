@@ -7,7 +7,6 @@ import http.server
 import json
 import sys
 import threading
-import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -42,7 +41,6 @@ from chat.notify import _detect_lan_ip, set_lan_base
 from chat.outreach import (
     _fire_outreach,
     _get_last_user_ts,
-    _parse_when,
 )
 from core.config import (
     _auth_cfg,
@@ -75,10 +73,8 @@ from memory.memory import (
 from prompts.prompts import PROMPT_CATEGORIES  # 分类常量已迁出
 from session.session import (
     get_session,
-    global_pending_event,
     sessions_map,
 )
-from session.tools import get_session_tools, set_session_tools
 
 # 提示词模块大类（world 世界设定已废弃，由独立「世界书」体系替代）
 # PROMPT_CATEGORIES/PRESET_CATEGORIES 由 prompts.prompts 提供
@@ -142,11 +138,7 @@ def get_project_tree(root_dir, max_depth=3):
 # _safe_resolve_path 迁至 chat.llm
 
 
-def _find_pending_session():
-    for s in list(sessions_map.values()):
-        if s.pending_event.is_set():
-            return s
-    return None
+# _find_pending_session 迁至 session.session
 
 
 # log_print 已迁移至 core.net（见文件顶部导入）
@@ -388,55 +380,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         # 聊天主路由(submit/clear/reply/tts/tts·option/done/interrupt/typing/edit/delete/reroll)
         # 已迁至 routes.chat_routes（分发表处理）
         # 提示词/预设/会话 POST 路由已迁至 routes.prompt_routes
-        if path == "/api/outreach":
-            # 手动新建一个主动联系任务（前端面板用；与角色自助排程同一套底层）
-            length = int(self.headers.get("Content-Length", 0))
-            data = json.loads(_safe_decode(self.rfile.read(length)))
-            kind = data.get("kind")
-            mode = data.get("mode", "wake")
-            if kind not in scheduler.KINDS or mode not in scheduler.MODES:
-                self._json({"ok": False, "error": "kind/mode 不合法"})
-            else:
-                when_spec = _parse_when(kind, data.get("when"))
-                job = scheduler.add_job(
-                    session.session_id,
-                    kind,
-                    when_spec,
-                    mode,
-                    content=data.get("content", ""),
-                    intention=data.get("intention", ""),
-                )
-                self._json({"ok": True, "job": job})
-
-        elif path == "/api/outreach/delete":
-            length = int(self.headers.get("Content-Length", 0))
-            data = json.loads(_safe_decode(self.rfile.read(length)))
-            rid = data.get("id")
-            self._json({"ok": scheduler.delete_job(rid) if rid else False})
-
-        elif path == "/api/outreach/toggle":
-            length = int(self.headers.get("Content-Length", 0))
-            data = json.loads(_safe_decode(self.rfile.read(length)))
-            rid = data.get("id")
-            self._json(
-                {
-                    "ok": scheduler.set_enabled(rid, bool(data.get("enabled")))
-                    if rid
-                    else False
-                }
-            )
-
-        elif path == "/api/tools":
-            # 按会话窗口授权工具（outreach/web/coding）。body 传要改的项即可，增量合并。
-            length = int(self.headers.get("Content-Length", 0))
-            data = json.loads(_safe_decode(self.rfile.read(length))) if length else {}
-            cfg = set_session_tools(session.session_id, data)
-            self._json({"ok": True, "tools": cfg})
-
-        # ================= Code Agent（薄路由，业务全在 agent.py） =================
-        # /api/agent/* 已迁至 routes.agent_routes（分发表处理）
-        else:
-            self._json({"ok": False, "error": "not found"}, 404)
+        # outreach/tools 等 POST 已迁至 routes.misc_routes；走到这里即未命中
+        self._json({"ok": False, "error": "not found"}, 404)
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -452,133 +397,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if routes.dispatch_get(self, path, query, session, session_id):
             return
 
-        if path == "/api/messages":
-            with session.lock:
-                self._json(session.messages)
-            return
-
         # GET /api/config 迁至 routes.config_routes
 
-        if path == "/api/tools":
-            # 读取本会话的工具授权状态，供前端开关初始化
-            self._json({"ok": True, "tools": get_session_tools(session.session_id)})
-            return
-
-        if path == "/api/debug/last_prompt":
-            if session.last_llm_payload:
-                self._json(session.last_llm_payload)
-            else:
-                self._json({"error": "暂无记录"})
-            return
-
-        if path == "/api/wait_pending":
-            if config.get("mode") == "api":
-                self._json({"pending": False})
-                return
-            # 🔥 真正阻塞等待，零消耗挂机（不再忙轮询）。跨所有会话感知，不锁死在单个 session_id 上，
-            # 否则用户在非 default 会话发消息时，挂在原 session 上等待的轮询永远收不到通知。
-            found = _find_pending_session()
-            if not found:
-                global_pending_event.wait(timeout=86400)
-                global_pending_event.clear()
-                found = _find_pending_session()
-            if found:
-                with found.lock:
-                    pro = getattr(found, "proactive_request", None)
-                    if pro:
-                        # 调度唤醒：不是用户发来的消息，而是请角色主动组织一条消息
-                        found.proactive_request = None  # 消费一次
-                        text = (
-                            f"（系统·主动联系时机：现在请你以角色身份主动给用户发一条消息，"
-                            f"对方此刻不在对话里。事由/心情：{pro}。直接说正文，自然简短，"
-                            f"贴合当前关系与场景，不要解释这是主动消息。回复请照常用 <msg> 信封，"
-                            f"并在 /api/reply 时附带 proactive:true。）"
-                        )
-                        self._json(
-                            {
-                                "pending": True,
-                                "text": text,
-                                "proactive": True,
-                                "session_id": found.session_id,
-                                "scene": {
-                                    "scene_id": found.current_scene_id,
-                                    "time": found.current_time,
-                                    "place": found.current_place,
-                                },
-                            }
-                        )
-                    else:
-                        self._json(
-                            {
-                                "pending": True,
-                                "text": found.pending_text,
-                                "session_id": found.session_id,
-                                "scene": {
-                                    "scene_id": found.current_scene_id,
-                                    "time": found.current_time,
-                                    "place": found.current_place,
-                                },
-                            }
-                        )
-            else:
-                self._json({"pending": False})
-            return
-
         # ====== 这是补回来的打字状态专用接口 ======
-        if path == "/api/typing_status":
-            with session.lock:
-                if session.is_typing and (
-                    time.time() - session.typing_ts > 120
-                ):  # 改为 120
-                    session.is_typing = False
-                    session.current_status = ""
-                # pending 不受 120s 超时影响：只有真正回复/中断/清空才会解除，是前端解锁等待态的唯一依据
-                self._json(
-                    {
-                        "typing": session.is_typing,
-                        "pending": session.pending_event.is_set(),
-                        "status": session.current_status,
-                    }
-                )
-            return
-            return
-
-        if path == "/api/status":
-            last_user_ts = last_any_ts = None
-            with session.lock:
-                for m in reversed(session.messages):
-                    if last_any_ts is None:
-                        last_any_ts = m.get("ts")
-                    if m["role"] == "user" and last_user_ts is None:
-                        last_user_ts = m.get("ts")
-                    if last_user_ts and last_any_ts:
-                        break
-
-                if session.is_typing and (
-                    time.time() - session.typing_ts > 120
-                ):  # 改为 120
-                    session.is_typing = False
-                    session.current_status = ""
-
-                self._json(
-                    {
-                        "message_count": len(session.messages),
-                        "last_user_ts": last_user_ts,
-                        "last_any_ts": last_any_ts,
-                        "pending": session.pending_event.is_set(),
-                        "typing": session.is_typing,
-                        "status": session.current_status,
-                        "mode": config.get("mode", "api"),
-                    }
-                )
-            return
-            return
-
-        if path == "/api/outreach":
-            # 列出当前会话的主动联系任务
-            self._json({"jobs": scheduler.list_jobs(session.session_id)})
-            return
-
         # ================= Code Agent（薄路由） =================
         # /api/agent/*、/api/logs、/api/fs/list 已迁至 routes.agent_routes（分发表处理）
 

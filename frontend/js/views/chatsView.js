@@ -225,8 +225,7 @@ class ChatsView {
         if (!confirm("清空该会话所有消息？")) return;
         const r = await api.clear(s.id);
         if (r.ok) {
-          localStorage.removeItem('chat_draft_' + s.id);
-          showToast("已清空");
+           showToast("已清空");
           this.refresh();
         }
       } else if (act === "delete") {

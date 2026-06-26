@@ -774,12 +774,13 @@
           >
             <span>全局约束 (Global Instruction)</span>
             <span
+              id="ca-global-inst-save"
               style="color: var(--active-color); cursor: pointer"
-              onclick="showToast('约束已保存')"
               >保存</span
             >
           </div>
           <textarea
+            id="ca-global-inst-input"
             placeholder="例如：你是一个资深的前端专家，请始终使用 TypeScript 和 Vue3 输出代码，不要擅自修改无关文件..."
             style="
               width: 100%;
@@ -853,6 +854,13 @@
           </div>
         </header>
 
+        <!-- 1.5 Todo 列表 -->
+        <div class="workspace-todos-panel" id="ca-todos-panel" style="display: none; padding: 10px 15px; background: #1e1e1e; border-bottom: 1px solid #333;">
+          <div style="font-size: 12px; color: #888; margin-bottom: 6px; font-weight: bold;">任务计划 (Todo)</div>
+          <div id="ca-todos-list" style="font-size: 13px; color: #ddd; display: flex; flex-direction: column; gap: 4px;"></div>
+        </div>
+
+        <!-- 2. 工作区 -->
         <!-- 2. 工作区 -->
         <div class="workspace-files-panel">
           <div

@@ -181,3 +181,20 @@
       /api/outreach 仍回落旧链。
 - server.py 累计：3754 -> 700 行级别。旧链仅剩 outreach(3) + 零散 GET(messages/tools/status/typing_status/
       wait_pending/debug·last_prompt) + login。
+
+## 模块化拆分 (server 瘦身, 第 13 刀: outreach + misc，路由收尾)
+- [x] _find_pending_session 迁入 session.session。
+- [x] routes/misc_routes.py：POST outreach/outreach·delete/outreach·toggle/tools + GET messages/tools/
+      debug·last_prompt/wait_pending/typing_status/status/outreach。
+- [x] do_POST 尾部 if/elif/else 整体收成「无条件 404 兜底」；do_GET 删尽 7 个块、保留 super().do_GET()。
+      /api/login 保留内联（在鉴权 gate 之前，不进分发表）。
+- 验证：py_compile + import OK；注册 POST 50 / GET 28；login 在；两处兜底在；
+      status 带 session 实测、wait_pending(api) 返回 {pending:False} 正确。
+
+## 🏁 server 模块化收尾总览
+- server.py：3754 -> 481 行（-87%）。do_POST/do_GET 仅剩骨架：parse→auth→session→dispatch→fallback。
+- 全部 79 条路由迁入 routes/（POST 50 + GET 28，+login 内联）：
+  agent_routes / chat_routes / config_routes / memory_routes / prompt_routes / misc_routes + registry。
+- 领域包：core(paths/net/config) · session(session/tools) · prompts · memory · chat(scene/envelope/tts/notify/outreach/llm)
+  · agents/coding(orchestrator+5角色) · tools(registry+RBAC) · routes。
+- 增量迁移策略：dispatch 命中即处理、未命中回落旧链，每刀独立可验证、行为零变化。

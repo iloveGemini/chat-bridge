@@ -35,6 +35,8 @@ class CodeAgentView {
       addCtxBtn: document.getElementById("ca-add-ctx-btn"),
       attachBtn: document.getElementById("ca-attach-btn"),
       localFileInput: document.getElementById("ca-local-file-input"),
+      todosPanel: document.getElementById("ca-todos-panel"),
+      todosList: document.getElementById("ca-todos-list"),
     };
   }
 
@@ -74,7 +76,10 @@ class CodeAgentView {
 
     e.filesPanel.addEventListener("click", async (ev) => {
       if (ev.target.classList.contains("remove-file")) {
-        await api.agentContextRemove(this.currentTaskId, ev.target.dataset.file);
+        await api.agentContextRemove(
+          this.currentTaskId,
+          ev.target.dataset.file,
+        );
         this.refreshContext();
       }
     });
@@ -122,6 +127,27 @@ class CodeAgentView {
       e.input.style.height = Math.min(e.input.scrollHeight, 120) + "px";
       e.input.focus();
       e.localFileInput.value = "";
+    });
+
+    e.scroll.addEventListener("click", (ev) => {
+      if (ev.target.classList.contains("clarify-submit-btn")) {
+        const card = ev.target.closest(".terminal-msg");
+        const inputs = card.querySelectorAll("input[type=radio]:checked");
+        const customs = card.querySelectorAll("input[type=text]");
+        let reply = "【需求确认回复】\n";
+        inputs.forEach((inp) => {
+          const qText = inp.closest("div").querySelector("div").textContent;
+          reply += `${qText} -> 选择了: ${inp.value}\n`;
+        });
+        customs.forEach((inp) => {
+          if (inp.value.trim()) {
+            reply += `补充说明: ${inp.value.trim()}\n`;
+          }
+        });
+
+        e.input.value = reply;
+        this.onSend();
+      }
     });
   }
 
@@ -182,52 +208,21 @@ class CodeAgentView {
       this.messages.push({ role: "user", text: t.content });
     } else if (t.type === "reasoning") {
       this.messages.push({ role: "thinking", text: t.content, time: "" });
-    } else if (t.type === "tool_call") {
+    } else if (t.type === "clarification_card") {
       let args = {};
       try {
-        args = JSON.parse(t.content).args || {};
-      } catch (e) {}
-      const cmd = this._fmtToolCall(t.tool_name, args);
-      this.messages.push({
-        role: "tool",
-        cmd,
-        result: "执行中...",
-        tool: t.tool_name,
-        pending: true,
-      });
-      const fp =
-        args.filepath ||
-        (args.files && args.files[0] && args.files[0].filepath);
-      if (fp) this.addFileToWorkspace(fp, "reading");
-    } else if (t.type === "tool_result") {
-      const m = [...this.messages]
-        .reverse()
-        .find((x) => x.role === "tool" && x.pending && x.tool === t.tool_name);
-      let parsed = null;
-      try {
-        parsed = JSON.parse(t.content);
-      } catch (e) {}
-      const isErr = parsed && (parsed.error || parsed.exit_code > 0);
-      const summary = this._fmtToolResult(parsed, t.content);
-      if (m) {
-        m.result = summary;
-        m.isError = !!isErr;
-        m.pending = false;
-      } else {
-        this.messages.push({
-          role: "tool",
-          cmd: t.tool_name,
-          result: summary,
-          isError: !!isErr,
-        });
+        args = JSON.parse(t.content);
+      } catch (e) {
+        try {
+          args = t.content; // 如果JSON解析失败，直接使用content
+        } catch (e2) {}
       }
-      this.workspaceFiles.forEach((f) => {
-        if (f.status === "reading") f.status = "loaded";
+      this.messages.push({
+        role: "clarification",
+        args: args,
+        pending: true,
+        tool: t.tool_name,
       });
-    } else if (t.role === "assistant" && t.type === "text") {
-      this.messages.push({ role: "ai", text: t.content });
-    } else if (t.role === "system" && t.type === "text") {
-      this.messages.push({ role: "sys", text: t.content });
     }
   }
 
@@ -260,7 +255,9 @@ class CodeAgentView {
         const t = r.elapsed != null ? ` (${r.elapsed}s)` : "";
         return `▸ ${q}${t}\n${a}`;
       });
-      return `[子Agent研究完成] ${parsed.count} 个问题：\n\n` + parts.join("\n\n");
+      return (
+        `[子Agent研究完成] ${parsed.count} 个问题：\n\n` + parts.join("\n\n")
+      );
     }
     if (parsed.command !== undefined) {
       const out =
@@ -320,6 +317,12 @@ class CodeAgentView {
         const card = res.checkpoint || {};
         const status = card.summary || res.task.status || "运行中";
         this.updateTask(status, res.task.progress || card.progress || 0);
+        if (res.task.todos && res.task.todos.length > 0) {
+          this.renderTodos(res.task.todos);
+        } else {
+          const e = this.els();
+          if (e.todosPanel) e.todosPanel.style.display = "none";
+        }
       }
       await this.refreshContext();
     } catch (e) {}
@@ -358,7 +361,8 @@ class CodeAgentView {
       const wrap = box.querySelector("#_cp_pinned");
       const items = this.pinnedContext || [];
       if (!items.length) {
-        wrap.innerHTML = '<span style="color:#666;">（暂未钉住任何文件）</span>';
+        wrap.innerHTML =
+          '<span style="color:#666;">（暂未钉住任何文件）</span>';
         return;
       }
       wrap.innerHTML = items
@@ -366,8 +370,11 @@ class CodeAgentView {
           const badge = c.mode === "full" ? "全码" : "大纲";
           return (
             '<span style="display:inline-block;margin:2px 4px;padding:2px 6px;background:#2d2d2d;border-radius:4px;">' +
-            badge + " " + escHtml(c.filepath) +
-            ' <span class="_cp_unpin" data-file="' + escHtml(c.filepath) +
+            badge +
+            " " +
+            escHtml(c.filepath) +
+            ' <span class="_cp_unpin" data-file="' +
+            escHtml(c.filepath) +
             '" style="color:#f14c4c;cursor:pointer;">✕</span></span>'
           );
         })
@@ -375,7 +382,8 @@ class CodeAgentView {
     };
     const loadFiles = async () => {
       const filesBox = box.querySelector("#_cp_files");
-      filesBox.innerHTML = '<div style="padding:14px;color:#888;">加载中…</div>';
+      filesBox.innerHTML =
+        '<div style="padding:14px;color:#888;">加载中…</div>';
       try {
         const res = await api.agentFiles(taskId);
         const files = (res && res.ok && res.files) || [];
@@ -384,16 +392,25 @@ class CodeAgentView {
             .map(
               (f) =>
                 '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px;border-bottom:1px solid #2a2a2a;">' +
-                '<span style="font-size:12px;word-break:break-all;flex:1;">' + escHtml(f) + "</span>" +
+                '<span style="font-size:12px;word-break:break-all;flex:1;">' +
+                escHtml(f) +
+                "</span>" +
                 '<span style="white-space:nowrap;margin-left:8px;">' +
-                '<button class="_cp_add" data-f="' + escHtml(f) + '" data-m="outline" style="margin-left:4px;padding:3px 8px;border:1px solid #4ec9b0;border-radius:4px;background:transparent;color:#4ec9b0;cursor:pointer;font-size:12px;">大纲</button>' +
-                '<button class="_cp_add" data-f="' + escHtml(f) + '" data-m="full" style="margin-left:4px;padding:3px 8px;border:1px solid #e0a458;border-radius:4px;background:transparent;color:#e0a458;cursor:pointer;font-size:12px;">全码</button>' +
+                '<button class="_cp_add" data-f="' +
+                escHtml(f) +
+                '" data-m="outline" style="margin-left:4px;padding:3px 8px;border:1px solid #4ec9b0;border-radius:4px;background:transparent;color:#4ec9b0;cursor:pointer;font-size:12px;">大纲</button>' +
+                '<button class="_cp_add" data-f="' +
+                escHtml(f) +
+                '" data-m="full" style="margin-left:4px;padding:3px 8px;border:1px solid #e0a458;border-radius:4px;background:transparent;color:#e0a458;cursor:pointer;font-size:12px;">全码</button>' +
                 "</span></div>",
             )
             .join("") ||
           '<div style="padding:14px;color:#888;">工作区暂无文件</div>';
       } catch (e) {
-        filesBox.innerHTML = '<div style="padding:14px;color:#f14c4c;">加载失败: ' + e.message + "</div>";
+        filesBox.innerHTML =
+          '<div style="padding:14px;color:#f14c4c;">加载失败: ' +
+          e.message +
+          "</div>";
       }
     };
     box.addEventListener("click", async (ev) => {
@@ -410,7 +427,8 @@ class CodeAgentView {
         renderPinned();
       }
     });
-    box.querySelector("#_cp_close").onclick = () => document.body.removeChild(ov);
+    box.querySelector("#_cp_close").onclick = () =>
+      document.body.removeChild(ov);
     ov.addEventListener("click", (ev) => {
       if (ev.target === ov) document.body.removeChild(ov);
     });
@@ -424,6 +442,47 @@ class CodeAgentView {
     const e = this.els();
     if (e.taskStatus) e.taskStatus.textContent = status;
     if (e.progressFill) e.progressFill.style.width = `${progressPercent}%`;
+  }
+
+  renderTodos(todos) {
+    const e = this.els();
+    if (!e.todosPanel) return;
+    e.todosPanel.style.display = "block";
+
+    const total = todos.length;
+    const doneCount = todos.filter((t) => t.done).length;
+    const currentTodo = todos.find((t) => !t.done);
+    const currentText = currentTodo ? currentTodo.text : "全部完成";
+    const stepNum = currentTodo ? doneCount + 1 : total;
+
+    const details = e.todosPanel.querySelector("details");
+    const isOpen = details && details.open ? "open" : "";
+
+    const listHtml = todos
+      .map((t) => {
+        const icon = t.done
+          ? `<svg viewBox="0 0 24 24" width="14" height="14" stroke="#4ec9b0" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`
+          : `<svg viewBox="0 0 24 24" width="14" height="14" stroke="#888" stroke-width="2" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>`;
+        const style = t.done
+          ? `text-decoration: line-through; color: #888;`
+          : ``;
+        return `<div style="display:flex; align-items:flex-start; gap:6px; line-height:1.4;">
+        <div style="margin-top:2px;">${icon}</div>
+        <div style="${style}">${escHtml(t.text)}</div>
+      </div>`;
+      })
+      .join("");
+
+    e.todosPanel.innerHTML = `
+      <details ${isOpen} style="cursor: pointer;">
+        <summary style="font-size: 12px; color: #888; font-weight: bold; outline: none; user-select: none;">
+          任务计划 <span style="color:#4ec9b0; margin-left:8px; font-weight: normal;">step:${stepNum}/${total} - ${escHtml(currentText)}</span>
+        </summary>
+        <div id="ca-todos-list" style="font-size: 13px; color: #ddd; display: flex; flex-direction: column; gap: 6px; margin-top: 8px; cursor: default;">
+          ${listHtml}
+        </div>
+      </details>
+    `;
   }
 
   addFileToWorkspace(filename, status = "loaded") {
@@ -628,6 +687,17 @@ class CodeAgentView {
             <div class="tool-result ${isErr}" style="white-space:pre-wrap;">${escHtml(m.result)}</div>
           </div>
         `;
+      } else if (m.role === "clarification") {
+        // 检查这个确认卡是否已经被回复
+        const cardIndex = this.messages.indexOf(m);
+        const subsequentUserMessage = this.messages
+          .slice(cardIndex + 1)
+          .find((msg) => msg.role === "user");
+        const isAnswered =
+          subsequentUserMessage &&
+          subsequentUserMessage.text.includes("【需求确认回复】");
+
+        html += this._renderClarificationCard(m, isAnswered);
       } else if (m.role === "ai") {
         html += `<div class="terminal-msg agent-reply">${renderMarkdown(m.text)}</div>`;
       }
@@ -643,6 +713,43 @@ class CodeAgentView {
       const e = this.els();
       if (e.scroll) e.scroll.scrollTop = e.scroll.scrollHeight;
     });
+  }
+
+  _renderClarificationCard(m, isAnswered) {
+    const qHtml = (m.args.questions || [])
+      .map((q, i) => {
+        const opts = (q.options || [])
+          .map((o) => {
+            const rec = o.recommended
+              ? `<span style="color:#e0a458;font-size:10px;border:1px solid #e0a458;border-radius:3px;padding:0 2px;margin-left:4px;">推荐</span>`
+              : "";
+            const checked = o.recommended ? "checked" : "";
+            return `<label style="display:block;margin-top:4px;cursor:pointer;"><input type="radio" name="clarify_${q.id}" value="${escHtml(o.value)}" ${checked}> ${escHtml(o.label)}${rec}</label>`;
+          })
+          .join("");
+        const custom = q.allow_custom
+          ? `<input type="text" id="clarify_custom_${q.id}" placeholder="自定义补充..." style="margin-top:6px;width:100%;background:#2d2d2d;border:1px solid #444;color:#ddd;padding:4px 8px;border-radius:4px;font-size:12px;">`
+          : "";
+        return `<div style="margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid #333;">
+        <div style="font-weight:bold;margin-bottom:6px;">${i + 1}. ${escHtml(q.text)}</div>
+        ${opts}
+        ${custom}
+      </div>`;
+      })
+      .join("");
+
+    const btn = !isAnswered
+      ? `<button class="clarify-submit-btn" style="background:#007acc;color:#fff;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">提交回复</button>`
+      : `<div style="color:#4ec9b0;">已回复</div>`;
+
+    return `<div class="terminal-msg" style="background:#252526;border:1px solid #3c3c3c;border-radius:6px;padding:12px;margin:8px 0;">
+      <div style="color:#4ec9b0;font-weight:bold;margin-bottom:10px;display:flex;align-items:center;gap:6px;">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+        需求确认
+      </div>
+      ${qHtml}
+      <div style="text-align:right;margin-top:8px;">${btn}</div>
+    </div>`;
   }
 }
 
