@@ -22,6 +22,7 @@ from agents.coding.state import CodingState
 from agents.coding.roles import ROLE_PROMPTS
 from tools.registry import get_tools, execute_tool
 from agents.engine import run_tool_loop
+from agents.coding.phase import run_phase
 
 PHASE_TO_ROLE = {
     "plan": "planner",
@@ -67,19 +68,6 @@ class CodingOrchestrator:
         except Exception:
             return ""
 
-    def _phase_messages(self, role, handoff):
-        sys_prompt = ROLE_PROMPTS.get(role, ROLE_PROMPTS["planner"])
-        tree = self._workspace_tree()
-        sys_full = (
-            sys_prompt
-            + "\n\n【环境】沙箱为 Windows，所有路径相对工作区根目录。"
-            + (f"\n\n【工作区文件树】\n{tree}" if tree else "")
-        )
-        return [
-            {"role": "system", "content": sys_full},
-            {"role": "user", "content": handoff},
-        ]
-
     def _build_handoff(self, phase, user_msg):
         d = self.state.data
         goal = (self.task or {}).get("goal") or ""
@@ -118,60 +106,16 @@ class CodingOrchestrator:
 
     def _run_phase(self, phase, handoff):
         role = PHASE_TO_ROLE[phase]
-        tools = get_tools(role)
-        messages = self._phase_messages(role, handoff)
-        max_rounds = PHASE_MAX_ROUNDS.get(phase, 6)
-
-        def _on_content(content):
-            c = (content or "").strip()
-            if c:
-                agent.add_turn(self.task_id, "assistant", "text", f"[{role}] {c}")
-                self._emit("assistant", f"[{role}] {c}")
-
-        def _on_tool_call(name, args):
-            agent.add_turn(
-                self.task_id, "assistant", "tool_call",
-                {"name": name, "args": args}, tool_name=name,
-            )
-            self._emit("tool_call", {"name": name, "args": args})
-
-        def _intercept(name, args):
-            if name == "ask_user_clarification":
-                self._emit("clarification", args)
-                agent.add_turn(
-                    self.task_id, "assistant", "tool_result",
-                    json.dumps({"clarify": True}, ensure_ascii=False), tool_name=name,
-                )
-                return {"payload": args}
-            return None
-
-        def _on_tool_result(name, args, result, tc):
-            result_str = json.dumps(result, ensure_ascii=False)
-            agent.add_turn(
-                self.task_id, "assistant", "tool_result", result_str, tool_name=name
-            )
-            self._emit("tool_result", {"name": name, "result": result})
-
-        out = run_tool_loop(
-            messages=messages, tools=tools, max_rounds=max_rounds,
-            chat=lambda m, t: self._chat_fn(m, t),
-            execute=lambda name, args: execute_tool(name, args, self.ctx),
+        return run_phase(
+            role, handoff,
+            chat_fn=self._chat_fn,
+            tool_ctx=self.ctx,
+            task_id=self.task_id,
+            emit=self._on_event,
+            workspace_tree=self._workspace_tree(),
             is_cancelled=lambda: agent._check_cancel(self.task_id),
-            on_assistant_content=_on_content,
-            on_tool_call=_on_tool_call,
-            intercept=_intercept,
-            on_tool_result=_on_tool_result,
+            max_rounds=PHASE_MAX_ROUNDS.get(phase, 6),
         )
-
-        stop = out.get("stop")
-        content = (out.get("content") or "").strip()
-        if stop == "cancelled":
-            return {"cancelled": True, "text": ""}
-        if stop == "intercepted":
-            return {"clarify": True, "clarify_payload": out["intercept"]["payload"], "text": content}
-        if stop == "no_tools":
-            return {"text": content}
-        return {"text": ""}
 
     def run_turn(self, user_msg, context):
         context = context or {}
