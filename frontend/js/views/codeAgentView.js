@@ -56,20 +56,15 @@ class CodeAgentView {
       e.queueBtn.addEventListener("click", () => this.onQueue());
     }
 
-    // 任务设置按钮：把最近一次发给主模型的完整 prompt 打到控制台（调试用）
-    const settingsBtn = document.getElementById("ca-settings-btn");
-    if (settingsBtn) {
-      settingsBtn.addEventListener("click", () => this.dumpLastPrompt());
-    }
-
     // 执行模式开关（全局）：⚡直接干 / 🛑先批准
-    if (settingsBtn && !document.getElementById("ca-mode-btn")) {
+    if (!document.getElementById("ca-mode-btn")) {
       this.modeBtn = document.createElement("button");
       this.modeBtn.id = "ca-mode-btn";
       this.modeBtn.style.cssText =
         "background:transparent;border:1px solid #555;color:#aaa;border-radius:5px;padding:2px 8px;cursor:pointer;font-size:11px;margin-right:6px;white-space:nowrap;";
       this.modeBtn.textContent = "模式…";
-      settingsBtn.parentNode.insertBefore(this.modeBtn, settingsBtn);
+      const header = document.querySelector("#code-agent-view .workspace-header");
+      if (header) header.appendChild(this.modeBtn);
       this.modeBtn.addEventListener("click", () => this.toggleMode());
       this.loadMode();
     }

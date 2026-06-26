@@ -83,14 +83,10 @@ export class VConsole {
     const inAgent = agentView && agentView.classList.contains("show");
 
     if (inAgent) {
-      // 复用 CodeAgentView 里现成的输出逻辑
-      const btn = document.getElementById("ca-settings-btn");
-      if (btn) {
-        btn.click();
+      import("./views/codeAgentView.js").then((m) => {
+        m.codeAgentView.dumpLastPrompt();
         this.log("[System] 已请求 Code Agent 的最近 Prompt", "#56b6ff");
-      } else {
-        this.log("[System] 未找到 Agent 的 Prompt 按钮", "#ffae57");
-      }
+      });
       return;
     }
 

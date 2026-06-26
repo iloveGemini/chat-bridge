@@ -50,8 +50,12 @@ def _dispatch_tool():
                         "type": "string",
                         "description": "交给该 agent 的明确任务(查什么/改什么/验证什么)，尽量自包含。",
                     },
+                    "reason": {
+                        "type": "string",
+                        "description": "一句话说明你此刻的判断、为什么派这个 agent 干这件事（会作为进度旁白展示给用户）。",
+                    },
                 },
-                "required": ["agent", "instruction"],
+                "required": ["agent", "instruction", "reason"],
             },
         },
     }
@@ -313,6 +317,11 @@ class CodingOrchestrator(BaseManager):
                     if name == "dispatch":
                         agent_name = args.get("agent", "")
                         instruction = (args.get("instruction") or "").strip()
+                        # 经理的旁白：把它派单的理由讲出来（模型调工具时 content 常为空，靠这个补上）
+                        reason = (args.get("reason") or "").strip()
+                        if reason:
+                            agent.add_turn(self.task_id, "assistant", "text", f"[planner] {reason}")
+                            self._emit("assistant", f"[planner] {reason}")
                         if agent_name not in DISPATCHABLE:
                             messages.append({"role": "tool", "tool_call_id": tc.get("id"),
                                              "content": f"未知 agent：{agent_name}，可选 {list(DISPATCHABLE)}"})

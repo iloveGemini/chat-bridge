@@ -1,5 +1,5 @@
 {
-  "phase": "plan",
+  "phase": "manage",
   "todos": [
     {
       "done": false,
@@ -37,8 +37,10 @@
   "diffs_text": "```json\n[\n  {\n    \"file\": \"session/tools.py\",\n    \"action\": \"replace\",\n    \"search\": \"SESSION_TOOL_DEFAULTS = {\\\"outreach\\\": True, \\\"web\\\": False, \\\"coding\\\": False}\",\n    \"replace\": \"SESSION_TOOL_DEFAULTS = {\\\"outreach\\\": True, \\\"web\\\": False, \\\"coding\\\": True}\",\n    \"description\": \"将 coding 工具组的默认权限设置为 True，从而授权给默认角色 AI助手。\"\n  }\n]\n```",
   "last_error": "",
   "cycle": 3,
-  "status": "idle",
+  "status": "failed",
   "develop_text": "",
   "search_rounds": 0,
-  "resume_at": ""
+  "resume_at": "",
+  "user_request": "user来报告，codeView右上角的按钮是删了。但vconsole提示：[System] 未找到 Agent 的 Prompt 按钮",
+  "plan_approved": false
 }
