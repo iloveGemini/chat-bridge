@@ -143,10 +143,10 @@ class ChatView {
       else this.onSend();
     });
 
-    e.input.addEventListener("input", () => {
+    /*     e.input.addEventListener("input", () => {
       e.input.style.height = "auto";
       e.input.style.height = Math.min(e.input.scrollHeight, 120) + "px";
-    });
+    }); */
 
     e.input.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter" && !ev.shiftKey && !isMobile) {

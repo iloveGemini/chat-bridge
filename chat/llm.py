@@ -22,6 +22,7 @@ from session.tools import get_session_tools, SESSION_TOOL_KEYS
 from tools.registry import resolve_tools
 import tooling
 import memory_store
+from agents.engine import run_tool_loop
 
 API_REQUEST_TIMESTAMPS = []  # 滑动窗口限流：最近请求时间戳
 
@@ -177,149 +178,121 @@ def call_llm_api(session_id):
 
     try:
         raw_reply = ""
-        for _round in range(99):
-            if session.interrupted:
-                log_print(f"🚫 [LLM 请求][{session_id}] 已被用户中断")
-                return
-            res_data = _post(payload)
-            if session.interrupted:
-                log_print(f"🚫 [LLM 请求][{session_id}] 已被用户中断")
-                return
-            choice = res_data["choices"][0]["message"]
-            tcs = choice.get("tool_calls") or []
 
-            # 👇 [修改 2]：在这里拦截并打印 AI 的思考过程（上帝视角）
-            ai_thought = choice.get("reasoning_content")
-            if not ai_thought:
-                ai_thought_match = re.search(
+        def _extract_reasoning(choice):
+            t = choice.get("reasoning_content")
+            if not t:
+                m = re.search(
                     r"<think>(.*?)</think>", choice.get("content") or "", re.DOTALL
                 )
-                if ai_thought_match:
-                    ai_thought = ai_thought_match.group(1)
+                if m:
+                    t = m.group(1)
+            return t
 
-            if ai_thought:
-                # print(
-                #    f"\n🧠 [AI 思考][{session_id}]:\n{ai_thought.strip()}\n" + "-" * 40
-                # )
-                with session.lock:
-                    session.messages.append(
-                        {
-                            "role": "assistant",
-                            "type": "reasoning",
-                            "text": ai_thought.strip(),
-                            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                            **_scene_stamp(session),
-                        }
-                    )
-                session.save_messages_async()
-
-            if not tcs:
-                raw_reply = (choice.get("content") or "").strip()
-                break
-
-            api_messages.append(
-                {
-                    "role": "assistant",
-                    "content": choice.get("content") or "",
-                    "tool_calls": tcs,
-                }
-            )
-            for tc in tcs:
-                fn = tc.get("function", {}) or {}
-                try:
-                    a = json.loads(fn.get("arguments") or "{}")
-                except Exception:
-                    a = {}
-                fname = fn.get("name", "")
-
-                with session.lock:
-                    session.current_status = f"正在调用工具: {fname}..."
-                    session.messages.append(
-                        {
-                            "role": "assistant",
-                            "type": "tool_call",
-                            "tool_name": fname,
-                            "tool_args": a,
-                            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                            **_scene_stamp(session),
-                        }
-                    )
-                session.save_messages_async()
-                # 👇 [修改 3]：在这里打印详细的工具调用参数
-                print(f"⚙️  [调度工具]: {fname}")
-                if fname == "run_terminal_command":
-                    print(f"   > 执行命令: {a.get('command')}")
-                elif fname == "apply_file_edits":
-                    print(f"   > 修改文件: {a.get('filepath')}")
-                    for idx, edit in enumerate(a.get("edits", [])):
-                        print(
-                            f"     [{idx + 1}] 替换 {edit.get('start_line')}~{edit.get('end_line')} 行"
-                        )
-                        new_text_preview = (
-                            edit.get("new_content", "").splitlines()[0][:50]
-                            if edit.get("new_content")
-                            else ""
-                        )
-                        print(f"         + {new_text_preview}...")
-                elif fname == "batch_write_files":
-                    for f in a.get("files", []):
-                        # print(f"   > 写入文件: {f.get('filepath')}")
-                        pass
-                elif fname == "grep_files":
-                    print(f"   > 搜索内容: '{a.get('pattern')}'")
-                elif fname == "read_file_with_lines":
-                    print(f"   > 读取文件: {a.get('filepath')}")
-
-                # ==========================
-                # 👇 原有的工具派发执行区域 👇
-                # ==========================
-                if fname in tooling.CODING_TOOL_NAMES:
-                    context = {
-                        "root_dir": ROOT,
-                        "prompts_dir": PROMPTS_DIR,
-                        "sessions_dir": SESSIONS_DIR,
-                        "safe_resolve_cb": _safe_resolve_path,
-                        "get_session_cb": get_session,
-                        "memory_store": memory_store,
-                        "embed_cb": _lore_embedding,
-                    }
-                    r = tooling.execute_tool(fname, a, context)
-                else:
-                    r = _exec_outreach_tool(fname, a, session_id)
-                # ==========================
-                # 👆 原有的工具派发执行区域 👆
-                # ==========================
-
-                with session.lock:
-                    session.messages.append(
-                        {
-                            "role": "assistant",
-                            "type": "tool_result",
-                            "tool_name": fname,
-                            "text": json.dumps(r, ensure_ascii=False),
-                            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                            **_scene_stamp(session),
-                        }
-                    )
-                session.save_messages_async()
-                # ==========================
-                # 👆 原有的工具派发执行区域 👆
-                # ==========================
-
-                api_messages.append(
+        def _on_reasoning(text):
+            with session.lock:
+                session.messages.append(
                     {
-                        "role": "tool",
-                        "tool_call_id": tc.get("id"),
-                        "content": json.dumps(r, ensure_ascii=False),
+                        "role": "assistant",
+                        "type": "reasoning",
+                        "text": text.strip(),
+                        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                        **_scene_stamp(session),
                     }
                 )
+            session.save_messages_async()
+
+        def _on_tool_call(fname, a):
+            with session.lock:
+                session.current_status = f"正在调用工具: {fname}..."
+                session.messages.append(
+                    {
+                        "role": "assistant",
+                        "type": "tool_call",
+                        "tool_name": fname,
+                        "tool_args": a,
+                        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                        **_scene_stamp(session),
+                    }
+                )
+            session.save_messages_async()
+            print(f"⚙️  [调度工具]: {fname}")
+            if fname == "run_terminal_command":
+                print(f"   > 执行命令: {a.get('command')}")
+            elif fname == "apply_file_edits":
+                print(f"   > 修改文件: {a.get('filepath')}")
+                for idx, edit in enumerate(a.get("edits", [])):
+                    print(
+                        f"     [{idx + 1}] 替换 {edit.get('start_line')}~{edit.get('end_line')} 行"
+                    )
+                    new_text_preview = (
+                        edit.get("new_content", "").splitlines()[0][:50]
+                        if edit.get("new_content")
+                        else ""
+                    )
+                    print(f"         + {new_text_preview}...")
+            elif fname == "batch_write_files":
+                for f in a.get("files", []):
+                    pass
+            elif fname == "grep_files":
+                print(f"   > 搜索内容: '{a.get('pattern')}'")
+            elif fname == "read_file_with_lines":
+                print(f"   > 读取文件: {a.get('filepath')}")
+
+        def _execute(fname, a):
+            if fname in tooling.CODING_TOOL_NAMES:
+                context = {
+                    "root_dir": ROOT,
+                    "prompts_dir": PROMPTS_DIR,
+                    "sessions_dir": SESSIONS_DIR,
+                    "safe_resolve_cb": _safe_resolve_path,
+                    "get_session_cb": get_session,
+                    "memory_store": memory_store,
+                    "embed_cb": _lore_embedding,
+                }
+                return tooling.execute_tool(fname, a, context)
+            return _exec_outreach_tool(fname, a, session_id)
+
+        def _on_tool_result(fname, a, r, tc):
+            with session.lock:
+                session.messages.append(
+                    {
+                        "role": "assistant",
+                        "type": "tool_result",
+                        "tool_name": fname,
+                        "text": json.dumps(r, ensure_ascii=False),
+                        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                        **_scene_stamp(session),
+                    }
+                )
+            session.save_messages_async()
+
+        def _on_tools_done(tcs):
             log_print(
                 f"🛠️ [角色工具][{session_id}] 执行 {len(tcs)} 个 "
                 f"({', '.join((t.get('function') or {}).get('name', '?') for t in tcs)})"
             )
-
             with session.lock:
                 session.current_status = "正在思考..."
+
+        _out = run_tool_loop(
+            messages=api_messages,
+            tools=(payload.get("tools") or None),
+            max_rounds=99,
+            chat=lambda _m, _t: _post(payload),
+            execute=_execute,
+            is_cancelled=lambda: session.interrupted,
+            cancel_after_chat=True,
+            extract_reasoning=_extract_reasoning,
+            on_reasoning=_on_reasoning,
+            on_tool_call=_on_tool_call,
+            on_tool_result=_on_tool_result,
+            on_tools_done=_on_tools_done,
+        )
+        if _out["stop"] == "cancelled":
+            log_print(f"🚫 [LLM 请求][{session_id}] 已被用户中断")
+            return
+        raw_reply = _out["content"].strip() if _out["stop"] == "no_tools" else ""
 
         # 解析信封：推进场景闩锁，只把干净 <content> 落库/发前端
         reply_text, _meta = ingest_reply(session, raw_reply)

@@ -23,12 +23,14 @@ def run_tool_loop(
     execute,                   # (name, args) -> 工具结果（任意可 json 序列化对象）
     max_rounds,
     is_cancelled=None,         # () -> bool，每轮开始前检查
+    cancel_after_chat=False,   # True 则 chat() 之后再查一次（复现 RP 的 _post 后中断检查）
     extract_reasoning=None,    # (choice) -> str|None，抽推理链（RP 用）
     on_reasoning=None,         # (text) -> None
     on_assistant_content=None, # (content) -> None，每轮模型正文（含工具轮）
     on_tool_call=None,         # (name, args) -> None
     intercept=None,            # (name, args) -> 非 None 则中止循环并冒泡（如 ask_user_clarification）
     on_tool_result=None,       # (name, args, result, tool_call) -> None
+    on_tools_done=None,        # (tool_calls) -> None，一轮所有工具执行完后（RP 用：日志+状态复位）
 ):
     content = ""
     for _round in range(max_rounds):
@@ -36,6 +38,10 @@ def run_tool_loop(
             return {"content": content, "stop": "cancelled"}
 
         res = chat(messages, tools)
+
+        if cancel_after_chat and is_cancelled and is_cancelled():
+            return {"content": content, "stop": "cancelled"}
+
         choice = res["choices"][0]["message"]
         tcs = choice.get("tool_calls") or []
         content = choice.get("content") or ""
@@ -78,5 +84,8 @@ def run_tool_loop(
                 {"role": "tool", "tool_call_id": tc.get("id"),
                  "content": json.dumps(result, ensure_ascii=False)}
             )
+
+        if on_tools_done is not None:
+            on_tools_done(tcs)
 
     return {"content": content, "stop": "max_rounds"}
