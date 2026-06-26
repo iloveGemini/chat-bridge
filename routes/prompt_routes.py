@@ -9,6 +9,7 @@ from core.paths import SESSIONS_DIR, PROMPTS_DIR, PRESETS_DIR
 from core.config import config, config_lock, save_config as _save_config
 from session.session import sessions_map, get_session
 from prompts.prompts import PROMPT_CATEGORIES, PRESET_CATEGORIES
+from prompts import output_formats as _of
 from routes.registry import post, get
 
 
@@ -235,6 +236,10 @@ def _presets_save(h, query, session, session_id):
         preset = {
             k: _safe_name(data.get(k)) or "default" for k in PRESET_CATEGORIES
         }
+        preset["agent_type"] = _safe_name(data.get("agent_type")) or "rp"
+        of = data.get("output_format")
+        if isinstance(of, list):
+            preset["output_format"] = [str(x) for x in of]
         (PRESETS_DIR / f"{name}.json").write_text(
             json.dumps(preset, ensure_ascii=False, indent=2), encoding="utf-8"
         )
@@ -419,6 +424,53 @@ def _get_prompts_list(h, query, session, session_id):
         }
     )
     return
+
+
+@get("/api/output_formats")
+def _get_output_formats(h, query, session, session_id):
+    h._json({"formats": _of.list_formats()})
+    return
+
+
+@post("/api/output_formats/save")
+def _output_formats_save(h, query, session, session_id):
+    length = int(h.headers.get("Content-Length", 0))
+    data = json.loads(_safe_decode(h.rfile.read(length)))
+    ok = _of.save_custom_format(
+        data.get("key", ""), data.get("label", ""), data.get("desc", ""),
+        data.get("fragment", ""), data.get("tag", ""),
+    )
+    h._json({"ok": ok, "error": None if ok else "key 非法或与内置冲突"})
+
+
+@post("/api/output_formats/delete")
+def _output_formats_delete(h, query, session, session_id):
+    length = int(h.headers.get("Content-Length", 0))
+    data = json.loads(_safe_decode(h.rfile.read(length)))
+    h._json({"ok": _of.delete_custom_format(data.get("key", ""))})
+
+
+@get("/api/output_format/session")
+def _get_output_format_session(h, query, session, session_id):
+    preset_name = session.active_prompts.get("preset")
+    sess = _of.get_session_output_format(session.dir)
+    h._json({
+        "override": sess,
+        "effective": _of.resolve_enabled(session, preset_name),
+        "preset": preset_name,
+        "formats": _of.list_formats(),
+    })
+    return
+
+
+@post("/api/output_format/session/set")
+def _output_format_session_set(h, query, session, session_id):
+    length = int(h.headers.get("Content-Length", 0))
+    data = json.loads(_safe_decode(h.rfile.read(length)))
+    cfg = _of.set_session_output_format(
+        session.dir, bool(data.get("set")), data.get("enabled") or []
+    )
+    h._json({"ok": True, "override": cfg})
 
 
 @get("/api/prompts/get")

@@ -80,6 +80,13 @@ class ApiService {
   savePreset(payload) { return this.post('/api/presets/save', payload); }
   deletePreset(name) { return this.post('/api/presets/delete', { name }); }
 
+  // ---- 输出格式（Output_Format 条目开关集）----
+  outputFormats() { return this.get('/api/output_formats'); }                         // 全局目录：内置 + 自定义
+  outputFormatSave(payload) { return this.post('/api/output_formats/save', payload); } // 新增/改自定义条目
+  outputFormatDelete(key) { return this.post('/api/output_formats/delete', { key }); }
+  outputFormatSession(sid) { return this.getS('/api/output_format/session', sid); }    // 会话覆盖态 + 生效集 + 目录
+  outputFormatSessionSet(set, enabled, sid) { return this.postS('/api/output_format/session/set', { set, enabled }, sid); }
+
   // ---- 记忆 ----
   memoryOverview(sid) { return this.getS('/api/memory/overview', sid); }
   memorySummarize(sid) { return this.postS('/api/memory/summarize', {}, sid); }

@@ -21,6 +21,7 @@ import agent
 from agents.coding.state import CodingState
 from agents.coding.roles import ROLE_PROMPTS
 from tools.registry import get_tools, execute_tool
+from agents.engine import run_tool_loop
 
 PHASE_TO_ROLE = {
     "plan": "planner",
@@ -120,59 +121,57 @@ class CodingOrchestrator:
         tools = get_tools(role)
         messages = self._phase_messages(role, handoff)
         max_rounds = PHASE_MAX_ROUNDS.get(phase, 6)
-        final_text = ""
 
-        for _round in range(max_rounds):
-            if agent._check_cancel(self.task_id):
-                return {"cancelled": True, "text": final_text}
+        def _on_content(content):
+            c = (content or "").strip()
+            if c:
+                agent.add_turn(self.task_id, "assistant", "text", f"[{role}] {c}")
+                self._emit("assistant", f"[{role}] {c}")
 
-            res = self._chat_fn(messages, tools)
-            choice = res["choices"][0]["message"]
-            tcs = choice.get("tool_calls") or []
-            content = (choice.get("content") or "").strip()
-
-            if content:
-                agent.add_turn(self.task_id, "assistant", "text", f"[{role}] {content}")
-                self._emit("assistant", f"[{role}] {content}")
-
-            if not tcs:
-                final_text = content
-                break
-
-            messages.append(
-                {"role": "assistant", "content": choice.get("content") or "", "tool_calls": tcs}
+        def _on_tool_call(name, args):
+            agent.add_turn(
+                self.task_id, "assistant", "tool_call",
+                {"name": name, "args": args}, tool_name=name,
             )
-            for tc in tcs:
-                fn = tc.get("function", {}) or {}
-                fname = fn.get("name", "")
-                try:
-                    fargs = json.loads(fn.get("arguments") or "{}")
-                except Exception:
-                    fargs = {}
-                agent.add_turn(
-                    self.task_id, "assistant", "tool_call",
-                    {"name": fname, "args": fargs}, tool_name=fname,
-                )
-                self._emit("tool_call", {"name": fname, "args": fargs})
+            self._emit("tool_call", {"name": name, "args": args})
 
-                if fname == "ask_user_clarification":
-                    self._emit("clarification", fargs)
-                    agent.add_turn(
-                        self.task_id, "assistant", "tool_result",
-                        json.dumps({"clarify": True}, ensure_ascii=False), tool_name=fname,
-                    )
-                    return {"clarify": True, "clarify_payload": fargs, "text": content}
-
-                result = execute_tool(fname, fargs, self.ctx)
-                result_str = json.dumps(result, ensure_ascii=False)
+        def _intercept(name, args):
+            if name == "ask_user_clarification":
+                self._emit("clarification", args)
                 agent.add_turn(
-                    self.task_id, "assistant", "tool_result", result_str, tool_name=fname
+                    self.task_id, "assistant", "tool_result",
+                    json.dumps({"clarify": True}, ensure_ascii=False), tool_name=name,
                 )
-                self._emit("tool_result", {"name": fname, "result": result})
-                messages.append(
-                    {"role": "tool", "tool_call_id": tc.get("id"), "content": result_str}
-                )
-        return {"text": final_text}
+                return {"payload": args}
+            return None
+
+        def _on_tool_result(name, args, result, tc):
+            result_str = json.dumps(result, ensure_ascii=False)
+            agent.add_turn(
+                self.task_id, "assistant", "tool_result", result_str, tool_name=name
+            )
+            self._emit("tool_result", {"name": name, "result": result})
+
+        out = run_tool_loop(
+            messages=messages, tools=tools, max_rounds=max_rounds,
+            chat=lambda m, t: self._chat_fn(m, t),
+            execute=lambda name, args: execute_tool(name, args, self.ctx),
+            is_cancelled=lambda: agent._check_cancel(self.task_id),
+            on_assistant_content=_on_content,
+            on_tool_call=_on_tool_call,
+            intercept=_intercept,
+            on_tool_result=_on_tool_result,
+        )
+
+        stop = out.get("stop")
+        content = (out.get("content") or "").strip()
+        if stop == "cancelled":
+            return {"cancelled": True, "text": ""}
+        if stop == "intercepted":
+            return {"clarify": True, "clarify_payload": out["intercept"]["payload"], "text": content}
+        if stop == "no_tools":
+            return {"text": content}
+        return {"text": ""}
 
     def run_turn(self, user_msg, context):
         context = context or {}

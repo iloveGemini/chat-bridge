@@ -13,7 +13,7 @@
 Status 槽现状仅由 scene 填充（未来按 category="status" 的状态项统一回填，见 ARCHITECTURE.md §2）。
 """
 from core.config import config, load_config as _load_config
-from prompts.prompts import _read_prompt_content, _resolve_preset, _apply_macros
+from prompts.prompts import _read_prompt_content, _resolve_preset, _apply_macros, PRESET_CATEGORIES
 from chat.scene import build_scene_block
 
 SYSTEM_SLOTS = ["main", "world_env", "role", "user", "memory_before"]
@@ -24,13 +24,16 @@ class PromptAssembler:
     def __init__(self, session):
         self.session = session
         self.active = session.active_prompts
-        # 预设展开（与 build_header/tail 完全一致的条件）
+        # 预设展开（与 build_header/tail 完全一致的条件）；预设是纯文本槽的引用包。
         if "preset" in self.active and self.active.get("preset") not in ("", "default"):
-            self.main_name, self.style_name, self.post_name = _resolve_preset(self.active.get("preset"))
+            refs = _resolve_preset(self.active.get("preset"))
         else:
-            self.main_name = self.active.get("main", "default")
-            self.style_name = self.active.get("style", "default")
-            self.post_name = self.active.get("post", "default")
+            refs = {c: self.active.get(c, "default") for c in PRESET_CATEGORIES}
+        self.main_name = refs["main"]
+        self.style_name = refs["style"]
+        self.post_name = refs["post"]
+        self.world_name = refs["world"]
+        self.reasoning_name = refs["reasoning"]
 
     # ---------------- System 头 槽位 ----------------
     def slot_main(self):
@@ -42,7 +45,8 @@ class PromptAssembler:
         return f"<role_definition>\n{main_content}\n</role_definition>" if main_content else ""
 
     def slot_world_env(self):
-        return ""  # RP 的 world 已废弃（归世界书）；coding 的 sandbox/repo 环境走这槽
+        w = _read_prompt_content("world", self.world_name)
+        return f"<world_setting>\n{w}\n</world_setting>" if w else ""
 
     def slot_role(self):
         c = _read_prompt_content("character", self.active.get("character", "default"))
@@ -72,10 +76,13 @@ class PromptAssembler:
         return f"<output_rules>\n{p}\n</output_rules>" if p else ""
 
     def slot_reasoning_scaffold(self):
-        return ""  # 预留 no-op（待 §2 思考链）
+        r = _read_prompt_content("reasoning", self.reasoning_name)
+        return f"<reasoning_guidance>\n{r}\n</reasoning_guidance>" if r else ""
 
     def slot_output_format(self):
-        return ""  # 预留 no-op（待 §1 输出格式）
+        from prompts.output_formats import build_output_format_block
+        block = build_output_format_block(self.session, self.active.get("preset"))
+        return f"<output_format>\n{block}\n</output_format>" if block else ""
 
     # ---------------- 组装 ----------------
     def build_system_head(self, char_name, user_name, memory_before=""):

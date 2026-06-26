@@ -80,6 +80,7 @@ def _lore_create(h, query, session, session_id):
             keys=data.get("keys") or [],
             priority=data.get("priority", 0),
             always_on=bool(data.get("always_on")),
+            position=(data.get("position") or "after"),
             embedding=_lore_embedding(title, content),
         )
         h._json({"ok": True, "id": rid})
@@ -160,6 +161,7 @@ def _lore_update(h, query, session, session_id):
             keys=data.get("keys"),
             priority=data.get("priority"),
             always_on=data.get("always_on"),
+            position=data.get("position"),
             embedding=emb,
         )
         h._json({"ok": ok})

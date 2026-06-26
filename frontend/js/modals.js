@@ -221,27 +221,97 @@ export async function openPresetEditor(name, tree, onDone) {
   contentEl.innerHTML = '<div style="padding:60px 0;text-align:center;color:var(--text-secondary);">加载中...</div>';
   router.pushView('generic-editor-view');
 
-  let refs = { main: 'default', style: 'default', post: 'default' };
-  if (name) { try { const d = await api.getPreset(name); if (d.ok && d.data) refs = { main: d.data.main || 'default', style: d.data.style || 'default', post: d.data.post || 'default' }; } catch (e) {} }
+  const SLOT_KEYS = ['main', 'world', 'style', 'post', 'reasoning'];
+  let refs = {}; SLOT_KEYS.forEach(k => refs[k] = 'default');
+  let agentType = 'rp';
+  let ofEnabled = new Set();   // 该预设启用的 output_format 条目
+  let ofCatalog = [];          // 全局条目目录（内置 + 自定义）
+  if (name) { try { const d = await api.getPreset(name); if (d.ok && d.data) { SLOT_KEYS.forEach(k => { if (d.data[k]) refs[k] = d.data[k]; }); agentType = d.data.agent_type || 'rp'; (d.data.output_format || []).forEach(k => ofEnabled.add(k)); } } catch (e) {} }
+  try { ofCatalog = (await api.outputFormats()).formats || []; } catch (e) {}
   const opt = (slot, sel) => (tree[slot] || []).map(n => `<option value="${escHtml(n)}" ${n === sel ? 'selected' : ''}>${escHtml(n)}</option>`).join('');
 
   if (router.history[router.history.length - 1] !== 'generic-editor-view') return;
+
+  const SLOTS = [['main', '主提示词 (main)'], ['world', '世界设定 (world·env)'], ['style', '文风 (style)'], ['post', '后续指令 (post)'], ['reasoning', '思维链脚手架 (reasoning)']];
+  const slotBlock = (slot, label) => `
+    <div class="sheet-section-label">${label}</div>
+    <select class="sheet-input ps-slot-sel" id="ps-${slot}" data-slot="${slot}" style="margin-bottom:6px;">${opt(slot, refs[slot])}</select>
+    <textarea class="sheet-textarea ps-slot-content" id="ps-${slot}-content" placeholder="该组成部分的正文内容" style="width:100%;min-height:120px;margin-bottom:6px;box-sizing:border-box;">加载中...</textarea>
+    <div style="display:flex;justify-content:flex-end;margin-bottom:16px;"><button class="p-btn ps-slot-save" data-slot="${slot}">保存此段内容</button></div>`;
+
+  const ofRows = ofCatalog.map(f => `
+    <div class="ios-item" style="background:var(--bg);">
+      <span class="label" style="font-size:14px;">${escHtml(f.label || f.key)}${f.custom ? ' <span style="font-size:10px;color:var(--text-faint);">自定义</span>' : ''}
+        <div style="font-size:11px;color:var(--text-secondary);font-weight:normal;margin-top:2px;">${escHtml(f.desc || '')}</div></span>
+      <label class="switch"><input type="checkbox" class="ps-of-chk" data-key="${escHtml(f.key)}" ${ofEnabled.has(f.key) ? 'checked' : ''}><span class="slider"></span></label>
+    </div>`).join('');
 
   contentEl.innerHTML = `
     <div class="form-group" style="margin-bottom:12px;">
       <input type="text" class="sheet-input" id="ps-name" placeholder="预设名称" value="${escHtml(name || '')}" ${name ? 'disabled' : ''}>
     </div>
-    <div class="sheet-section-label">主提示词 (main)</div><select class="sheet-input" id="ps-main" style="margin-bottom:12px;">${opt('main', refs.main)}</select>
-    <div class="sheet-section-label">文风 (style)</div><select class="sheet-input" id="ps-style" style="margin-bottom:12px;">${opt('style', refs.style)}</select>
-    <div class="sheet-section-label">后续指令 (post)</div><select class="sheet-input" id="ps-post" style="margin-bottom:12px;">${opt('post', refs.post)}</select>
+    <div class="sheet-section-label">适用方案 (agent_type)</div>
+    <select class="sheet-input" id="ps-agent-type" style="margin-bottom:12px;">
+      <option value="rp" ${agentType === 'rp' ? 'selected' : ''}>RP 角色扮演</option>
+      <option value="coding" ${agentType === 'coding' ? 'selected' : ''}>Coding 编码代理</option>
+    </select>
+    <div style="font-size:12px;color:var(--text-secondary);line-height:1.6;margin-bottom:10px;">
+      选择每个组成部分用哪一份提示词；下方文本框可直接编辑该份的正文，「保存此段内容」会写回该提示词本身。
+    </div>
+    ${SLOTS.map(([s, l]) => slotBlock(s, l)).join('')}
+
+    <div class="sheet-section-label">输出格式 (output_format)</div>
+    <div style="font-size:12px;color:var(--text-secondary);line-height:1.5;margin-bottom:6px;">勾选这套预设默认启用的格式条目；会话可整套覆盖。</div>
+    <div class="ios-group" style="margin-top:0;">${ofRows || '<div style="padding:12px 16px;color:var(--text-secondary);font-size:13px;">暂无条目</div>'}</div>
 
     ${(name && name !== 'default') ? `<div style="text-align:center;margin-top:20px;"><button class="edit-btn-cancel" id="ps-del" style="color:#ff3b30;background:transparent;width:100%;">删除此预设</button></div>` : ''}
   `;
 
+  // 记录每个槽位当前加载到的显示名，保存内容时回填，避免清空 prompt 的 name 字段
+  const dispNames = {};
+
+  const loadContent = async (slot) => {
+    const sel = contentEl.querySelector('#ps-' + slot);
+    const ta = contentEl.querySelector('#ps-' + slot + '-content');
+    if (!sel || !ta) return;
+    const pname = sel.value;
+    ta.value = '加载中...';
+    try {
+      const d = await api.getPrompt(slot, pname);
+      if (d.ok && d.data) { ta.value = d.data.content || ''; dispNames[slot] = d.data.name || pname; }
+      else { ta.value = ''; dispNames[slot] = pname; }
+    } catch (e) { ta.value = ''; dispNames[slot] = pname; }
+  };
+
+  // 初始加载三段内容 + 切换下拉时重载
+  SLOTS.forEach(([slot]) => {
+    loadContent(slot);
+    contentEl.querySelector('#ps-' + slot).onchange = () => loadContent(slot);
+  });
+
+  // 每段「保存此段内容」：写回对应提示词文件
+  contentEl.querySelectorAll('.ps-slot-save').forEach(btn => {
+    btn.onclick = async () => {
+      const slot = btn.dataset.slot;
+      const pname = contentEl.querySelector('#ps-' + slot).value;
+      const content = contentEl.querySelector('#ps-' + slot + '-content').value;
+      btn.disabled = true; btn.textContent = '保存中...';
+      try {
+        const r = await api.savePrompt({ category: slot, name: pname, content, display_name: dispNames[slot] || pname });
+        showToast(r.ok ? '内容已保存' : (r.error || '保存失败'));
+      } catch (e) { showToast('保存失败'); }
+      btn.disabled = false; btn.textContent = '保存此段内容';
+    };
+  });
+
   saveBtn.onclick = async () => {
     const finalName = name || contentEl.querySelector('#ps-name').value.trim();
     if (!finalName) { showToast('请填写预设名称'); return; }
-    const r = await api.savePreset({ name: finalName, main: contentEl.querySelector('#ps-main').value, style: contentEl.querySelector('#ps-style').value, post: contentEl.querySelector('#ps-post').value });
+    const payload = { name: finalName };
+    SLOT_KEYS.forEach(k => { payload[k] = contentEl.querySelector('#ps-' + k).value; });
+    payload.agent_type = contentEl.querySelector('#ps-agent-type').value;
+    payload.output_format = Array.from(contentEl.querySelectorAll('.ps-of-chk')).filter(c => c.checked).map(c => c.dataset.key);
+    const r = await api.savePreset(payload);
     if (r.ok) { showToast('已保存'); router.popView(); if(onDone) onDone(); } else showToast(r.error || '保存失败');
   };
 
@@ -362,6 +432,47 @@ export function openLorePanel(sid) {
     });
   }
   refresh();
+}
+
+// ========== 输出格式（会话级覆盖预设）==========
+export function openOutputFormatPanel(sid) {
+  const p = panel('输出格式 · 当前会话');
+  const draw = (d) => {
+    const ov = d.override || { set: false, enabled: [] };
+    const formats = d.formats || [];
+    const enabledSet = new Set(ov.set ? ov.enabled : (d.effective || []));
+    let h = `<div style="font-size:12px;color:var(--text-secondary);line-height:1.6;margin-bottom:10px;">
+      默认跟随预设「${escHtml(d.preset || 'default')}」。打开「覆盖预设」后，这一整套以本会话为准。</div>
+      <div class="ios-group" style="margin-top:0;">
+        <div class="ios-item" style="background:var(--bg);">
+          <span class="label">覆盖预设的输出格式</span>
+          <label class="switch"><input type="checkbox" id="of-master" ${ov.set ? 'checked' : ''}><span class="slider"></span></label>
+        </div>
+      </div>
+      <div class="ios-group" id="of-list" style="margin-top:10px;${ov.set ? '' : 'opacity:.5;pointer-events:none;'}">`;
+    if (!formats.length) h += '<div style="padding:12px 16px;color:var(--text-secondary);font-size:13px;">暂无条目</div>';
+    formats.forEach(f => {
+      h += `<div class="ios-item" style="background:var(--bg);">
+        <span class="label" style="font-size:14px;">${escHtml(f.label || f.key)}
+          <div style="font-size:11px;color:var(--text-secondary);font-weight:normal;margin-top:2px;">${escHtml(f.desc || '')}</div></span>
+        <label class="switch"><input type="checkbox" class="of-chk" data-key="${escHtml(f.key)}" ${enabledSet.has(f.key) ? 'checked' : ''}><span class="slider"></span></label>
+      </div>`;
+    });
+    h += `</div>`;
+    p.body.innerHTML = h;
+
+    const collect = () => Array.from(p.body.querySelectorAll('.of-chk')).filter(c => c.checked).map(c => c.dataset.key);
+    const save = async () => {
+      const setOn = p.body.querySelector('#of-master').checked;
+      const list = p.body.querySelector('#of-list');
+      list.style.opacity = setOn ? '1' : '.5';
+      list.style.pointerEvents = setOn ? 'auto' : 'none';
+      try { await api.outputFormatSessionSet(setOn, collect(), sid); } catch (e) { showToast('保存失败'); }
+    };
+    p.body.querySelector('#of-master').onchange = save;
+    p.body.querySelectorAll('.of-chk').forEach(c => c.onchange = save);
+  };
+  api.outputFormatSession(sid).then(draw).catch(() => { p.body.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-secondary);">读取失败</div>'; });
 }
 
 // ========== 主动联系 ==========

@@ -7,38 +7,40 @@ from core.net import log_print, _safe_name
 
 
 def _read_prompt_content(category, name):
-    """按 分类+名字 读取某个提示词文件的正文内容；读不到返回空串。"""
+    """按 分类+名字 读取提示词正文。兜底链：用户库 → data/prompts/_defaults/<cat>/。"""
     if not name:
         return ""
-    p_file = PROMPTS_DIR / category / f"{_safe_name(name)}.json"
-    if p_file.exists():
-        try:
-            return (
-                json.loads(p_file.read_text(encoding="utf-8"))
-                .get("content", "")
-                .strip()
-            )
-        except Exception as e:
-            log_print(f"[警告] 读取提示词文件 {p_file} 失败: {e}")
+    safe = _safe_name(name)
+    for base in (PROMPTS_DIR, PROMPTS_DIR / "_defaults"):
+        p_file = base / category / f"{safe}.json"
+        if p_file.exists():
+            try:
+                return (
+                    json.loads(p_file.read_text(encoding="utf-8"))
+                    .get("content", "")
+                    .strip()
+                )
+            except Exception as e:
+                log_print(f"[警告] 读取提示词文件 {p_file} 失败，尝试回落默认: {e}")
+                continue
     return ""
 
 
 def _resolve_preset(preset_name):
-    """预设是 {main,style,post} 的引用包。返回 (main_name, style_name, post_name)。"""
+    """预设是若干文本提示词分类的引用包。返回 {cat: name} dict（缺失回 default）。"""
+    refs = {c: "default" for c in PRESET_CATEGORIES}
     if not preset_name:
-        return ("default", "default", "default")
+        return refs
     p_file = PRESETS_DIR / f"{_safe_name(preset_name)}.json"
     if p_file.exists():
         try:
             d = json.loads(p_file.read_text(encoding="utf-8"))
-            return (
-                d.get("main", "default"),
-                d.get("style", "default"),
-                d.get("post", "default"),
-            )
+            for c in PRESET_CATEGORIES:
+                if d.get(c):
+                    refs[c] = d.get(c)
         except Exception as e:
             log_print(f"[警告] 读取预设 {p_file} 失败: {e}")
-    return ("default", "default", "default")
+    return refs
 
 
 def _get_display_name(category, file_name, default_val):
@@ -65,5 +67,5 @@ def _apply_macros(text, char_name, user_name):
 
 
 # 提示词大类常量（从 server.py 迁来，供路由层与初始化共用）
-PRESET_CATEGORIES = ["main", "style", "post"]
-PROMPT_CATEGORIES = ["main", "character", "user", "style", "post"]
+PRESET_CATEGORIES = ["main", "world", "style", "post", "reasoning"]
+PROMPT_CATEGORIES = ["main", "character", "user", "world", "style", "post", "reasoning"]

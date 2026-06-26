@@ -20,7 +20,7 @@ class PluginManagerView {
       const res = await api.toolsGet(sid);
       const cfg = res && res.tools ? res.tools : null;
       if (cfg) {
-        ['outreach', 'web'].forEach(t => {
+        ['outreach', 'web', 'coding'].forEach(t => {
           if (t in cfg) localStorage.setItem(`tool_${t}_${sid}`, cfg[t] ? '1' : '0');
         });
       }
@@ -36,6 +36,7 @@ class PluginManagerView {
 
     const outreachEn = localStorage.getItem(`tool_outreach_${sid}`) !== '0';
     const webEn = localStorage.getItem(`tool_web_${sid}`) === '1';
+    const codingEn = localStorage.getItem(`tool_coding_${sid}`) === '1';
 
     list.innerHTML = `
       <!-- ================= Tool 1: 主动联系 (Proactive Outreach) ================= -->
@@ -105,6 +106,20 @@ class PluginManagerView {
             <input type="checkbox" class="plugin-switch" data-tool="web" ${webEn ? 'checked' : ''}>
             <span class="slider"></span>
           </label>
+        </div>
+      </div>
+
+      <!-- ================= Tool 3: 本地项目操控 (Coding) ================= -->
+      <div class="ios-group" id="plugin-card-coding">
+        <div class="ios-item">
+          <span class="label"><span style="color:var(--text-secondary);display:flex;">${ICONS.plugin || ''}</span> 本地项目操控 (Coding)</span>
+          <label class="switch">
+            <input type="checkbox" class="plugin-switch" data-tool="coding" ${codingEn ? 'checked' : ''}>
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div style="padding:4px 16px 12px;font-size:11px;color:var(--text-faint);line-height:1.5;">
+          开启后角色可调用读写文件 / 跑命令等编码工具。仅在你确实需要让该会话操作本地项目时打开。
         </div>
       </div>
     `;

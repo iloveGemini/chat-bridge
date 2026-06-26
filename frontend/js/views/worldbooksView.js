@@ -109,11 +109,19 @@ class WorldbooksView {
 
     const card = (e) => {
       const on = !!e.always_on;
+      const pos = (e.position === 'before') ? 'before' : 'after';
       return `<div class="lore-item" data-id="${e.id}" style="margin:8px 0;padding:10px;border:1px solid var(--border-color);border-radius:10px;background:var(--surface);">
         <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
           <input class="p-inp lore-title" value="${escHtml(e.title)}" placeholder="标题" style="font-weight:600;">
           <label style="font-size:11px;color:var(--text-secondary);white-space:nowrap;"><input type="checkbox" class="lore-on" ${on ? 'checked' : ''}>常驻</label>
           <input class="p-inp lore-pri" type="number" value="${e.priority || 0}" style="max-width:54px;flex:0 0 54px;">
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;">
+          <span style="font-size:11px;color:var(--text-secondary);white-space:nowrap;">注入位置</span>
+          <select class="p-inp lore-pos" style="flex:1;">
+            <option value="after" ${pos === 'after' ? 'selected' : ''}>尾部 · 贴对话末尾（召回，默认）</option>
+            <option value="before" ${pos === 'before' ? 'selected' : ''}>系统头 · 常驻强注意力区</option>
+          </select>
         </div>
         <input class="p-inp lore-keys" value="${escHtml((e.keys || []).join('，'))}" placeholder="触发词，逗号分隔" style="width:100%;margin-bottom:6px;${on ? 'opacity:.5;' : ''}">
         <textarea class="p-ta lore-content" placeholder="设定正文">${escHtml(e.content)}</textarea>
@@ -177,7 +185,8 @@ class WorldbooksView {
           id, title, content,
           keys: parseKeys(row.querySelector('.lore-keys').value),
           priority: +row.querySelector('.lore-pri').value || 0,
-          always_on: onBox.checked
+          always_on: onBox.checked,
+          position: row.querySelector('.lore-pos').value
         });
         showToast(r.ok ? '已保存' : '失败');
       };

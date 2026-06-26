@@ -22,6 +22,98 @@ class ChatView {
     this.maxDisplay = MAX_DISPLAY;
     this._bound = false;
     this._lastSig = "";
+
+    // 模块化渲染：按消息 type 分派到对应渲染器（ARCHITECTURE §1 type→renderer 注册表）。
+    // 每个渲染器签名 (m, ctx) => html 字符串；未命中 type 回落 default（普通气泡）。
+    this.RENDERERS = {
+      reasoning: this._renderReasoning,
+      tool_call: this._renderToolCall,
+      tool_result: this._renderToolResult,
+      default: this._renderNormal,
+    };
+  }
+
+  // 分派入口：选中对应 type 的渲染器并执行（this 透传给渲染器方法）
+  renderBubbles(m, ctx) {
+    const r = this.RENDERERS[m.type] || this.RENDERERS.default;
+    return r.call(this, m, ctx);
+  }
+
+  _renderReasoning(m) {
+    return `<details class="system-panel">
+          <summary class="panel-summary">
+            <div class="tool-title">Thought progress</div>
+          </summary>
+          <div class="panel-content">${renderMarkdown(m.text || "")}</div>
+        </details>`;
+  }
+
+  _renderToolCall(m, ctx) {
+    const isRunning = ctx.isRunning;
+    // 需求确认卡片 (ask_user_clarification)
+    if (m.tool_name === "ask_user_clarification") {
+      const args = m.tool_args || {};
+      const question = args.question || "请确认接下来的操作：";
+      const options = args.options || [];
+      const rec = args.recommended || "";
+      const optsHtml = options
+        .map(
+          (opt) => `
+            <div class="clarify-option ${opt === rec ? "recommended" : ""}" data-opt="${escHtml(opt)}">
+              ${opt === rec ? "👉 " : ""}${escHtml(opt)}
+            </div>
+          `,
+        )
+        .join("");
+      return `
+            <div class="msg-bubble clarification-card" style="border: 1px solid var(--border-color); background: var(--bg-secondary);">
+              <div class="card-title" style="font-weight: bold; margin-bottom: 8px;">📝 需要确认</div>
+              <div class="card-question" style="font-size: 14px; margin-bottom: 12px;">${renderMarkdown(question)}</div>
+              <div class="card-options" style="display: flex; flex-direction: column; gap: 8px;">${optsHtml}</div>
+            </div>
+          `;
+    }
+    // 常规工具调用面板
+    const statusHtml = isRunning
+      ? `<span class="tool-status">Executing... ▼</span>`
+      : `<span class="tool-status done">Completed ▼</span>`;
+    return `<details class="system-panel" ${isRunning ? "open" : ""}>
+            <summary class="panel-summary">
+              <div class="tool-title"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg> Call Tool: ${m.tool_name}</div>
+              ${statusHtml}
+            </summary>
+            <div class="panel-content"><pre>${escHtml(JSON.stringify(m.tool_args, null, 2))}</pre></div>
+          </details>`;
+  }
+
+  _renderToolResult(m) {
+    return `<details class="system-panel">
+          <summary class="panel-summary">
+            <div class="tool-title"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> Tool Result</div>
+          </summary>
+          <div class="panel-content"><pre>${escHtml(m.text || "")}</pre></div>
+        </details>`;
+  }
+
+  _renderNormal(m, ctx) {
+    const { isUser, imgHtml, body, bubbleMode } = ctx;
+    // 多段气泡模式：仅当非用户、不含代码块时，按连续双换行拆段，避免破坏 Markdown
+    if (bubbleMode && !isUser && !(m.text || "").includes("```")) {
+      const parts = (m.text || "")
+        .split(/\n{2,}/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (parts.length > 1) {
+        return parts
+          .map(
+            (p, bi) =>
+              `<div class="msg-bubble">${bi === 0 ? imgHtml : ""}${renderMarkdown(p)}</div>`,
+          )
+          .join("");
+      }
+      return `<div class="msg-bubble">${imgHtml}${body}</div>`;
+    }
+    return `<div class="msg-bubble">${imgHtml}${body}</div>`;
   }
 
   els() {
@@ -68,14 +160,28 @@ class ChatView {
     e.rmImg.addEventListener("click", () => this.clearImage());
     e.jump.addEventListener("click", () => this.scrollToBottom(true));
 
+    // 全局事件代理，支持动作按钮和需求确认卡片点击
     e.scroll.addEventListener("click", (ev) => {
+      // 处理动作按钮
       const btn = ev.target.closest(".action-btn");
-      if (!btn) return;
-      const act = btn.dataset.act;
-      const msgEl = btn.closest(".msg");
-      if (!msgEl) return;
-      const idx = parseInt(msgEl.dataset.msgIndex);
-      this.handleMsgAction(act, idx, btn);
+      if (btn) {
+        const act = btn.dataset.act;
+        const msgEl = btn.closest(".msg");
+        if (!msgEl) return;
+        const idx = parseInt(msgEl.dataset.msgIndex);
+        this.handleMsgAction(act, idx, btn);
+        return;
+      }
+
+      // 处理需求确认卡片 (Clarification Card) 点击
+      const clarifyBtn = ev.target.closest(".clarify-option");
+      if (clarifyBtn) {
+        const optValue = clarifyBtn.dataset.opt;
+        if (optValue) {
+          e.input.value = optValue;
+          this.onSend(); // 直接发送用户的选择
+        }
+      }
     });
   }
 
@@ -125,35 +231,6 @@ class ChatView {
       this.setGenerating(this.pending);
       this.render();
 
-      let banner = document.getElementById("tooling-banner");
-      if (!banner) {
-        banner = document.createElement("div");
-        banner.id = "tooling-banner";
-        banner.style.cssText =
-          "background: var(--menu-bg, rgba(255,255,255,0.85)); color: var(--text-secondary); font-size: 13px; padding: 8px 18px; position: absolute; top: 76px; left: 50%; transform: translateX(-50%); z-index: 10; border-radius: 20px; box-shadow: 0 8px 30px rgba(0,0,0,0.12); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 0.5px solid var(--border-color); display: none; align-items: center; justify-content: center; gap: 8px; font-weight: 500; opacity: 0; transition: opacity 0.3s ease, top 0.3s ease;";
-        const chatRoom = document.getElementById("chat-room");
-        if (chatRoom) chatRoom.appendChild(banner);
-      }
-
-      if (
-        (false) /* 顶部思考气泡 tooling-banner 已按需移除，不再浮现 */ &&
-        this.typingState &&
-        this.typingState !== "对方正在思考..."
-      ) {
-        banner.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation: spin 2s linear infinite;"><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line></svg> <span>${escHtml(this.typingState)}</span><style>@keyframes spin { 100% { transform: rotate(360deg); } }</style>`;
-        banner.style.display = "flex";
-        requestAnimationFrame(() => {
-          banner.style.opacity = "1";
-          banner.style.top = "80px";
-        });
-      } else if (banner) {
-        banner.style.opacity = "0";
-        banner.style.top = "70px";
-        setTimeout(() => {
-          if (banner.style.opacity === "0") banner.style.display = "none";
-        }, 300);
-      }
-
       const last = this.messages[this.messages.length - 1];
       if (this.pending || (last && last.role === "user")) this.startPolling();
       else this.stopPolling();
@@ -186,7 +263,7 @@ class ChatView {
       e.send.title = "停止生成";
     } else {
       e.send.className = "send-btn";
-      e.send.innerHTML = `<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path></svg>`;
+      e.send.innerHTML = `<svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path></svg>`;
       e.send.title = "发送";
     }
   }
@@ -214,9 +291,11 @@ class ChatView {
       ts: new Date().toISOString(),
     });
 
+    // 彻底清空输入框并重置高度
     e.input.value = "";
     e.input.style.height = "auto";
     this.clearImage();
+
     this.pending = true;
     this.typingState = "正在思考...";
     this.setGenerating(true);
@@ -237,15 +316,49 @@ class ChatView {
     }
   }
 
+  // 修复：重新启用 Canvas 进行图片压缩
   onPickImage(ev) {
     const file = ev.target.files[0];
     if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      showToast("请选择图片文件");
+      return;
+    }
+
     const reader = new FileReader();
     reader.onload = (e2) => {
-      this.pendingImage = e2.target.result;
-      const e = this.els();
-      e.previewImg.src = this.pendingImage;
-      e.preview.classList.add("show");
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const MAX_SIZE = 1200; // 自动压缩最大尺寸
+        let w = img.width;
+        let h = img.height;
+
+        // 等比缩放
+        if (w > MAX_SIZE || h > MAX_SIZE) {
+          if (w > h) {
+            h = Math.round((h * MAX_SIZE) / w);
+            w = MAX_SIZE;
+          } else {
+            w = Math.round((w * MAX_SIZE) / h);
+            h = MAX_SIZE;
+          }
+        }
+
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, w, h);
+
+        // 压缩为 JPEG，质量 0.85
+        this.pendingImage = canvas.toDataURL("image/jpeg", 0.85);
+
+        const e = this.els();
+        e.previewImg.src = this.pendingImage;
+        e.preview.classList.add("show");
+      };
+      img.src = e2.target.result;
     };
     reader.readAsDataURL(file);
     ev.target.value = "";
@@ -258,7 +371,6 @@ class ChatView {
     if (e.previewImg) e.previewImg.src = "";
   }
 
-  // 获取图标的防御性兜底函数
   _getIcon(key, fallbackSvg) {
     return ICONS && ICONS[key] ? ICONS[key] : fallbackSvg;
   }
@@ -271,8 +383,19 @@ class ChatView {
     const start = Math.max(0, total - this.maxDisplay);
     const visible = this.messages.slice(start);
     const bubbleMode = store.getState().config.bubbleMode;
+
+    // 修复：将 tool_args 加入签名，防止工具参数改变时 UI 不刷新
     const sig =
-      JSON.stringify(visible.map((m) => [m.role, m.text, m.image, m.type])) +
+      JSON.stringify(
+        visible.map((m) => [
+          m.role,
+          m.text,
+          m.image,
+          m.type,
+          m.tool_name,
+          m.tool_args,
+        ]),
+      ) +
       "|" +
       this.pending +
       "|" +
@@ -281,6 +404,7 @@ class ChatView {
       bubbleMode +
       "|" +
       start;
+
     if (sig === this._lastSig && !preserveScroll) return;
     this._lastSig = sig;
 
@@ -297,7 +421,6 @@ class ChatView {
       const isToolCall = m.type === "tool_call";
       const isToolResult = m.type === "tool_result";
 
-      // 【双保险类名】同时注入旧版的 right/left 和新版的 msg-user/msg-ai，确保任何CSS都能命中
       const alignClass = isUser ? "right msg-user" : "left msg-ai";
       const imgHtml = m.image
         ? `<img src="${escHtml(m.image)}" class="msg-img">`
@@ -306,57 +429,16 @@ class ChatView {
         ? escHtml(m.text || "")
         : renderMarkdown(m.text || "");
 
-      let bubblesHtml = "";
+      // 模块化分派：按 type 选渲染器（reasoning / tool_call / tool_result / default）
+      const isRunning = this.pending && i === visible.length - 1;
+      const bubblesHtml = this.renderBubbles(m, {
+        isUser,
+        imgHtml,
+        body,
+        bubbleMode,
+        isRunning,
+      });
 
-      if (isReasoning) {
-        bubblesHtml = `<details class="system-panel">
-          <summary class="panel-summary">
-            <div class="tool-title">Thought progress</div>
-          </summary>
-          <div class="panel-content">${renderMarkdown(m.text || "")}</div>
-        </details>`;
-      } else if (isToolCall) {
-        const isRunning = this.pending && i === visible.length - 1;
-        const statusHtml = isRunning
-          ? `<span class="tool-status">Executing... ▼</span>`
-          : `<span class="tool-status done">Completed ▼</span>`;
-        bubblesHtml = `<details class="system-panel" ${isRunning ? "open" : ""}>
-          <summary class="panel-summary">
-            <div class="tool-title"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path></svg> Call Tool: ${m.tool_name}</div>
-            ${statusHtml}
-          </summary>
-          <div class="panel-content"><pre>${escHtml(JSON.stringify(m.tool_args, null, 2))}</pre></div>
-        </details>`;
-      } else if (isToolResult) {
-        bubblesHtml = `<details class="system-panel">
-          <summary class="panel-summary">
-            <div class="tool-title"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg> Tool Result</div>
-          </summary>
-          <div class="panel-content"><pre>${escHtml(m.text || "")}</pre></div>
-        </details>`;
-      } else {
-        // 多段气泡模式判定
-        if (bubbleMode && !isUser) {
-          const parts = (m.text || "")
-            .split(/\n{1,}/)
-            .map((s) => s.trim())
-            .filter(Boolean);
-          if (parts.length > 1) {
-            bubblesHtml = parts
-              .map(
-                (p, bi) =>
-                  `<div class="msg-bubble">${bi === 0 ? imgHtml : ""}${renderMarkdown(p)}</div>`,
-              )
-              .join("");
-          } else {
-            bubblesHtml = `<div class="msg-bubble">${imgHtml}${body}</div>`;
-          }
-        } else {
-          bubblesHtml = `<div class="msg-bubble">${imgHtml}${body}</div>`;
-        }
-      }
-
-      // 动作按钮栏（普通消息气泡才展示）
       let actionsHtml = "";
       if (!isReasoning && !isToolCall && !isToolResult) {
         if (isUser) {
@@ -376,7 +458,6 @@ class ChatView {
         }
       }
 
-      // 【找回灵魂容器 msg-content】将气泡和按钮重新包裹进去
       html += `
         <div class="msg ${alignClass}" data-msg-index="${actualIdx}">
           <div class="msg-content" style="${isReasoning || isToolCall || isToolResult ? "width: 100%;" : ""}">

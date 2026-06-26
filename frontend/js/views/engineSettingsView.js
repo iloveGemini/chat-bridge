@@ -32,6 +32,10 @@ class EngineSettingsView {
     const rr = this.cfg.rerank || {};
     const mem = this.cfg.memory || {};
     const tts = this.cfg.tts || {};
+    const sp = a.sampling || {};      // 采样参数 (config.api.sampling)
+    const caps = a.caps || {};        // 模型能力描述符 (config.api.caps)
+    const numv = (v) => (v === undefined || v === null || v === '') ? '' : v;
+    const reasoning = caps.reasoning || 'prompt';
 
     // 智能解析当前的音色 ID，判断是预设还是自定义
     const ttsVoiceId = tts.voice_id || 'female-tianmei';
@@ -63,6 +67,65 @@ class EngineSettingsView {
         <div class="ios-item sel-model-row" id="row-sel-api" style="display:none; background:var(--bg);">
           <span class="label">选择拉取的模型</span>
           <select class="ios-select" id="sel-api" style="width:50%;"></select>
+        </div>
+      </div>
+
+      <div class="ios-sec-title">采样参数 (Sampling)</div>
+      <div class="ios-group" style="margin-top:0;">
+        <div style="padding:10px 16px 4px;font-size:12px;color:var(--text-secondary);line-height:1.5;">
+          留空＝用调用方默认值（聊天 0.7 / 主动 0.8 / 总结 0.2）。temperature 与 top_p 惯例只调其一，别同时激进。
+        </div>
+        <div class="ios-item">
+          <span class="label">temperature</span>
+          <input type="number" step="0.05" min="0" max="2" class="ios-input" id="es-sp-temp" value="${numv(sp.temperature)}" placeholder="如 0.8">
+        </div>
+        <div class="ios-item">
+          <span class="label">top_p</span>
+          <input type="number" step="0.05" min="0" max="1" class="ios-input" id="es-sp-topp" value="${numv(sp.top_p)}" placeholder="如 0.95">
+        </div>
+        <div class="ios-item">
+          <span class="label">max_tokens</span>
+          <input type="number" step="1" min="1" class="ios-input" id="es-sp-maxtok" value="${numv(sp.max_tokens)}" placeholder="留空＝不限">
+        </div>
+        <div class="ios-item">
+          <span class="label">reasoning_effort</span>
+          <select class="ios-select" id="es-sp-effort" style="width:50%;">
+            <option value="" ${!sp.reasoning_effort ? 'selected' : ''}>（不发送）</option>
+            <option value="low" ${sp.reasoning_effort === 'low' ? 'selected' : ''}>low</option>
+            <option value="medium" ${sp.reasoning_effort === 'medium' ? 'selected' : ''}>medium</option>
+            <option value="high" ${sp.reasoning_effort === 'high' ? 'selected' : ''}>high</option>
+          </select>
+        </div>
+        <div class="ios-item" style="background:var(--bg);">
+          <span class="label">期望流式输出 (stream)</span>
+          <label class="switch"><input type="checkbox" id="es-sp-stream" ${sp.stream ? 'checked' : ''}><span class="slider"></span></label>
+        </div>
+      </div>
+
+      <div class="ios-sec-title">模型能力 (Caps · 进阶)</div>
+      <div class="ios-group" style="margin-top:0;">
+        <div style="padding:10px 16px 4px;font-size:12px;color:var(--text-secondary);line-height:1.5;">
+          描述该端点支持什么。不支持的采样参数会在发送前被自动裁掉，避免被接口 4xx 拒。多数 OpenAI 兼容接口保持默认即可。
+        </div>
+        <div class="ios-item" style="background:var(--bg);">
+          <span class="label">支持流式 (supports_stream)</span>
+          <label class="switch"><input type="checkbox" id="es-caps-stream" ${caps.supports_stream ? 'checked' : ''}><span class="slider"></span></label>
+        </div>
+        <div class="ios-item" style="background:var(--bg);">
+          <span class="label">支持 top_k (supports_top_k)</span>
+          <label class="switch"><input type="checkbox" id="es-caps-topk" ${caps.supports_top_k ? 'checked' : ''}><span class="slider"></span></label>
+        </div>
+        <div class="ios-item">
+          <span class="label">推理类型 (reasoning)</span>
+          <select class="ios-select" id="es-caps-reasoning" style="width:50%;">
+            <option value="prompt" ${reasoning === 'prompt' ? 'selected' : ''}>prompt（普通模型，可注入思考链）</option>
+            <option value="native" ${reasoning === 'native' ? 'selected' : ''}>native（o1/r1 等自带推理）</option>
+            <option value="off" ${reasoning === 'off' ? 'selected' : ''}>off（关闭）</option>
+          </select>
+        </div>
+        <div class="ios-item">
+          <span class="label">最大上下文 (max_context)</span>
+          <input type="number" step="1" min="1" class="ios-input" id="es-caps-maxctx" value="${numv(caps.max_context)}" placeholder="留空＝不钳制">
         </div>
       </div>
 
@@ -237,6 +300,11 @@ class EngineSettingsView {
     const val = (id) => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
     const chk = (id) => { const el = document.getElementById(id); return el ? el.checked : false; };
     const num = (id, def) => { const el = document.getElementById(id); const n = el ? parseFloat(el.value) : NaN; return isNaN(n) ? def : n; };
+    // 空值返回 undefined（让后端回落默认值，而不是写入 0/空串）
+    const numOpt = (id) => { const el = document.getElementById(id); if (!el || el.value.trim() === '') return undefined; const n = parseFloat(el.value); return isNaN(n) ? undefined : n; };
+    const strOpt = (id) => { const el = document.getElementById(id); const v = el ? el.value.trim() : ''; return v === '' ? undefined : v; };
+    // 仅保留有值的键，避免把空键写进 config
+    const prune = (o) => { const r = {}; Object.keys(o).forEach(k => { if (o[k] !== undefined) r[k] = o[k]; }); return r; };
 
     // 1. 代理所有拉取模型的点击事件
     document.querySelectorAll('.btn-test-models').forEach(btn => {
@@ -290,8 +358,25 @@ class EngineSettingsView {
 
     // 3. 核心保存逻辑（提取为公共函数，支持静默保存）
     const doSave = async (popView = true) => {
+      const sampling = prune({
+        temperature: numOpt('es-sp-temp'),
+        top_p: numOpt('es-sp-topp'),
+        max_tokens: numOpt('es-sp-maxtok'),
+        reasoning_effort: strOpt('es-sp-effort'),
+        stream: chk('es-sp-stream') || undefined,
+      });
+      const caps = prune({
+        supports_stream: chk('es-caps-stream'),
+        supports_top_k: chk('es-caps-topk'),
+        reasoning: strOpt('es-caps-reasoning') || 'prompt',
+        max_context: numOpt('es-caps-maxctx') ?? null,
+      });
       const payload = {
-        api: { base_url: val('es-api-url'), api_key: val('es-api-key'), model: val('es-api-model'), rpm: num('es-api-rpm', 5) },
+        api: {
+          ...(this.cfg.api || {}),   // 保留 caps/sampling 之外的既有键
+          base_url: val('es-api-url'), api_key: val('es-api-key'), model: val('es-api-model'), rpm: num('es-api-rpm', 5),
+          sampling, caps,
+        },
         summary_api: { base_url: val('es-sum-url'), api_key: val('es-sum-key'), model: val('es-sum-model') },
         worker_api: { base_url: val('es-wk-url'), api_key: val('es-wk-key'), model: val('es-wk-model'), rpm: num('es-wk-rpm', 20) },
         embedding: { enabled: chk('es-emb-en'), base_url: val('es-emb-url'), api_key: val('es-emb-key'), model: val('es-emb-model') },

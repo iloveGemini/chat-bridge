@@ -80,6 +80,10 @@ class ChatSettingsView {
           <span class="label"><span style="color:var(--text-secondary);display:flex;">${ICONS.plugin}</span> Tool 管理</span>
           <span class="val">主动联系等</span>
         </div>
+        <div class="ios-item" id="cs-output-format">
+          <span class="label"><span style="color:var(--text-secondary);display:flex;">${ICONS.branch}</span> 输出格式</span>
+          <span class="val">覆盖预设</span>
+        </div>
       </div>
 
       <div class="ios-group">
@@ -178,6 +182,14 @@ class ChatSettingsView {
     if (toolsRule) {
       toolsRule.onclick = () => {
         import('./pluginManagerView.js').then(m => m.pluginManagerView.open(sid));
+      };
+    }
+
+    // 6.5 输出格式（会话级覆盖预设）
+    const ofRule = document.getElementById('cs-output-format');
+    if (ofRule) {
+      ofRule.onclick = () => {
+        import('../modals.js').then(m => m.openOutputFormatPanel(sid));
       };
     }
 
