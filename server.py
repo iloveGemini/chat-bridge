@@ -9,7 +9,6 @@ import shutil
 import sys
 import threading
 import time
-import urllib.request
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -40,7 +39,7 @@ if sys.platform == "win32":
 # 路径常量 / 配置单例 / 网络工具 已抽离到 core/ 包，这里导入回本模块命名空间，
 # 既让本文件内的裸名引用（PORT/config/log_print…）继续可用，也保持 server.xxx 的向后兼容。
 import routes
-from chat.notify import _detect_lan_ip, _push_notify, _resolved_notify_cfg, set_lan_base
+from chat.notify import _detect_lan_ip, set_lan_base
 from chat.outreach import (
     _fire_outreach,
     _get_last_user_ts,
@@ -73,15 +72,10 @@ from core.paths import (
     UPLOAD_DIR,
 )
 from memory.memory import (
-    _lore_embedding,
     _migrate_legacy_memory,
-    build_injected_memory,
-    embed_query,
-    summarize_session,
 )
 from session.session import (
     SESSION_BINDING_KEYS,
-    _session_scope,
     get_session,
     global_pending_event,
     sessions_map,
@@ -639,227 +633,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             else:
                 self._json({"ok": False, "error": "preset not found"})
 
-        elif path == "/api/toggle_mode":
-            new_mode = "claude_mode" if config.get("mode") == "api" else "api"
-            config["mode"] = new_mode
-            _save_config()
-            self._json({"ok": True, "mode": new_mode})
-
-        elif path == "/api/config/save":
-            length = int(self.headers.get("Content-Length", 0))
-            new_cfg = json.loads(_safe_decode(self.rfile.read(length)))
-            with config_lock:
-                config.update(new_cfg)  # 深度更新内存中的 config
-            _save_config()
-            self._json({"ok": True})
-            return
-
-        elif path == "/api/test_models":
-            # ⭐️ 由 Python 后端代理向目标 API 发送请求，完美避开浏览器的跨域 CORS 限制
-            length = int(self.headers.get("Content-Length", 0))
-            data = json.loads(_safe_decode(self.rfile.read(length)))
-            base_url = data.get("base_url", "").rstrip("/")
-            api_key = data.get("api_key", "")
-
-            if not base_url:
-                self._json({"ok": False, "error": "请先填写 base_url"})
-                return
-
-            # 智能兼容：如果用户没写 /models，自动补齐标准 OpenAI 兼容的 /models 路径
-            target_url = (
-                f"{base_url}/models" if not base_url.endswith("/models") else base_url
-            )
-            try:
-                req = urllib.request.Request(
-                    target_url, headers={"Authorization": f"Bearer {api_key}"}
-                )
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    res_body = json.loads(resp.read().decode("utf-8"))
-                    models = [m["id"] for m in res_body.get("data", []) if "id" in m]
-                    self._json({"ok": True, "models": models})
-            except Exception as e:
-                self._json({"ok": False, "error": str(e)})
-            return
-
-        elif path == "/api/notify/test":
-            # 单独跑通推送通道用：往配置的通道发一条测试通知，把成败原样回报前端
-            _load_config()
-            ok, detail = _push_notify(
-                "Chat Bridge 测试推送", "如果你在手机上看到这条，推送通道就通了 ✅"
-            )
-            icon_url = (_resolved_notify_cfg().get("bark") or {}).get("icon") or "(无)"
-            log_print(f"🔔 [推送测试] ok={ok} detail={detail}")
-            log_print(
-                f"🔔 [推送测试] 图标URL={icon_url} —— 用手机浏览器打开它，能看到图才说明手机够得到"
-            )
-            self._json({"ok": ok, "detail": detail, "icon": icon_url})
-
-        elif path == "/api/memory/summarize":
-            threading.Thread(
-                target=summarize_session, args=(session,), kwargs={"full": True}
-            ).start()
-            self._json({"ok": True})
-
-        elif path == "/api/memory/edit":
-            length = int(self.headers.get("Content-Length", 0))
-            data = json.loads(_safe_decode(self.rfile.read(length)))
-            table, rid = data.get("table"), data.get("id")
-            ok = False
-            if table == "events":
-                emb = embed_query(data["summary"]) if data.get("summary") else None
-                ok = memory_store.update_event(
-                    rid,
-                    summary=data.get("summary"),
-                    type=data.get("type"),
-                    weight=data.get("weight"),
-                    importance=data.get("importance"),
-                    embedding=emb,
-                )
-            elif table == "facts":
-                ok = memory_store.update_fact(
-                    rid,
-                    subject=data.get("subject"),
-                    predicate=data.get("predicate"),
-                    obj=data.get("object"),
-                    is_state=data.get("is_state"),
-                )
-            elif table == "summaries" and data.get("key"):
-                memory_store.upsert_summary(data["key"], data.get("text", ""))
-                ok = True
-            self._json({"ok": ok})
-
-        elif path == "/api/memory/forget":
-            length = int(self.headers.get("Content-Length", 0))
-            data = json.loads(_safe_decode(self.rfile.read(length)))
-            table, rid = data.get("table"), data.get("id")
-            if table not in ("events", "chunks", "facts", "summaries"):
-                self._json({"ok": False, "error": "invalid table"})
-            else:
-                self._json({"ok": memory_store.forget(table, rid)})
-
-        elif path == "/api/lore":
-            # 新建世界书条目（挂到指定世界书 book_id 下）
-            length = int(self.headers.get("Content-Length", 0))
-            data = json.loads(_safe_decode(self.rfile.read(length)))
-            title = (data.get("title") or "").strip()
-            content = (data.get("content") or "").strip()
-            book_id = data.get("book_id")
-            if book_id is None:
-                self._json({"ok": False, "error": "book_id 必填"})
-            elif not title or not content:
-                self._json({"ok": False, "error": "title/content 必填"})
-            else:
-                rid = memory_store.add_lore(
-                    memory_store.worldbook_scope(book_id),
-                    title,
-                    content,
-                    keys=data.get("keys") or [],
-                    priority=data.get("priority", 0),
-                    always_on=bool(data.get("always_on")),
-                    embedding=_lore_embedding(title, content),
-                )
-                self._json({"ok": True, "id": rid})
-
-        # ---------- 世界书容器（worldbooks）管理 ----------
-        elif path == "/api/worldbooks/create":
-            length = int(self.headers.get("Content-Length", 0))
-            data = json.loads(_safe_decode(self.rfile.read(length)))
-            name = (data.get("name") or "").strip() or "未命名世界书"
-            bind_type = data.get("bind_type", "none")
-            bind_target = data.get("bind_target", "") or ""
-            bid = memory_store.create_worldbook(name, bind_type, bind_target)
-            self._json({"ok": True, "id": bid})
-
-        elif path == "/api/worldbooks/update":
-            length = int(self.headers.get("Content-Length", 0))
-            data = json.loads(_safe_decode(self.rfile.read(length)))
-            bid = data.get("id")
-            if bid is None:
-                self._json({"ok": False, "error": "id 必填"})
-            else:
-                ok = memory_store.update_worldbook(
-                    bid,
-                    name=data.get("name"),
-                    bind_type=data.get("bind_type"),
-                    bind_target=data.get("bind_target"),
-                )
-                self._json({"ok": ok})
-
-        elif path == "/api/worldbooks/delete":
-            length = int(self.headers.get("Content-Length", 0))
-            data = json.loads(_safe_decode(self.rfile.read(length)))
-            bid = data.get("id")
-            self._json(
-                {"ok": memory_store.delete_worldbook(bid) if bid is not None else False}
-            )
-
-        elif path == "/api/worldbooks/session/set":
-            # 设置本会话手动挂载的世界书 id 列表（角色/用户绑定的不在此列，会自动并入）
-            length = int(self.headers.get("Content-Length", 0))
-            data = json.loads(_safe_decode(self.rfile.read(length)))
-            ids = data.get("ids")
-            if not isinstance(ids, list):
-                self._json({"ok": False, "error": "ids 须为数组"})
-            else:
-                with session.lock:
-                    session.active_worldbooks = [int(i) for i in ids]
-                session.save_worldbooks()
-                self._json({"ok": True})
-
-        elif path == "/api/lore/update":
-            length = int(self.headers.get("Content-Length", 0))
-            data = json.loads(_safe_decode(self.rfile.read(length)))
-            rid = data.get("id")
-            if not rid:
-                self._json({"ok": False, "error": "id 必填"})
-            else:
-                emb = (
-                    _lore_embedding(data.get("title"), data.get("content"))
-                    if (
-                        data.get("title") is not None or data.get("content") is not None
-                    )
-                    else None
-                )
-                ok = memory_store.update_lore(
-                    rid,
-                    title=data.get("title"),
-                    content=data.get("content"),
-                    keys=data.get("keys"),
-                    priority=data.get("priority"),
-                    always_on=data.get("always_on"),
-                    embedding=emb,
-                )
-                self._json({"ok": ok})
-
-        elif path == "/api/lore/delete":
-            length = int(self.headers.get("Content-Length", 0))
-            data = json.loads(_safe_decode(self.rfile.read(length)))
-            rid = data.get("id")
-            self._json({"ok": memory_store.delete_lore(rid) if rid else False})
-
-        elif path == "/api/lore/reindex":
-            # 给指定世界书下「还没有向量」的存量条目补 embedding（语义召回上线后回填用）
-            length = int(self.headers.get("Content-Length", 0))
-            data = json.loads(_safe_decode(self.rfile.read(length))) if length else {}
-            book_id = data.get("book_id")
-            scope = (
-                memory_store.worldbook_scope(book_id)
-                if book_id is not None
-                else _session_scope(session)
-            )
-            done, skipped = 0, 0
-            for e in memory_store.list_lore(scope):
-                if e.get("has_embedding"):
-                    skipped += 1
-                    continue
-                emb = _lore_embedding(e.get("title"), e.get("content"))
-                if emb is None:
-                    skipped += 1
-                    continue
-                memory_store.update_lore(e["id"], embedding=emb)
-                done += 1
-            self._json({"ok": True, "reindexed": done, "skipped": skipped})
-
+        # 配置 POST(toggle_mode/config·save/test_models/notify·test) 迁至 routes.config_routes
+        # 记忆/世界书/lore 的 POST 路由已迁至 routes.memory_routes
         elif path == "/api/outreach":
             # 手动新建一个主动联系任务（前端面板用；与角色自助排程同一套底层）
             length = int(self.headers.get("Content-Length", 0))
@@ -929,10 +704,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self._json(session.messages)
             return
 
-        if path == "/api/config":
-            with config_lock:
-                self._json(config)
-            return
+        # GET /api/config 迁至 routes.config_routes
 
         if path == "/api/tools":
             # 读取本会话的工具授权状态，供前端开关初始化
@@ -1203,124 +975,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
             return
 
-        if path == "/api/memory/context":
-            q = query.get("q", [""])[0]
-            self._json({"context": build_injected_memory(session, q)})
-            return
-
-        if path == "/api/lore":
-            # 列出某本世界书（book_id）下的全部条目
-            book_id = query.get("book_id", [None])[0]
-            if book_id is None:
-                self._json({"lore": [], "error": "book_id 必填"})
-            else:
-                self._json(
-                    {
-                        "lore": memory_store.list_lore(
-                            memory_store.worldbook_scope(book_id)
-                        )
-                    }
-                )
-            return
-
-        if path == "/api/worldbooks/list":
-            # 全局：列出所有世界书（含条目数）
-            self._json({"worldbooks": memory_store.list_worldbooks()})
-            return
-
-        if path == "/api/worldbooks/session":
-            # 本会话视角：自动并入（角色/用户绑定）的 + 手动挂载的 + 全部可选书
-            char = session.active_prompts.get("character") or "default"
-            user = session.active_prompts.get("user") or "default"
-            manual = set(getattr(session, "active_worldbooks", []) or [])
-            books = memory_store.list_worldbooks()
-            auto, others = [], []
-            for wb in books:
-                bt, tgt = wb.get("bind_type"), wb.get("bind_target")
-                if bt == "character" and tgt == char:
-                    wb = {**wb, "auto_reason": "character"}
-                    auto.append(wb)
-                elif bt == "user" and tgt == user:
-                    wb = {**wb, "auto_reason": "user"}
-                    auto.append(wb)
-                else:
-                    others.append(wb)
-            self._json(
-                {
-                    "character": char,
-                    "user": user,
-                    "auto": auto,
-                    "others": others,
-                    "manual_ids": sorted(manual),
-                }
-            )
-            return
-
         if path == "/api/outreach":
             # 列出当前会话的主动联系任务
             self._json({"jobs": scheduler.list_jobs(session.session_id)})
-            return
-
-        if path == "/api/memory/search":
-            q = query.get("q", [""])[0]
-            try:
-                k = int(query.get("k", ["5"])[0])
-            except ValueError:
-                k = 5
-            scope = _session_scope(session)
-            qv = embed_query(q) if q else None
-            self._json(
-                {
-                    "events": memory_store.recall_events(
-                        scope, query_vec=qv, query_text=q, k=k
-                    ),
-                    "chunks": memory_store.recall_chunks(
-                        scope, query_vec=qv, query_text=q, k=k
-                    ),
-                }
-            )
-            return
-
-        if path == "/api/memory/list":
-            scope = _session_scope(session)
-            kind = query.get("kind", [None])[0]
-            self._json({"items": memory_store.list_memories(scope, kind)})
-            return
-
-        if path == "/api/memory/overview":
-            scope = _session_scope(session)
-            sid = session.session_id
-            items = memory_store.list_memories(scope)
-            events = [i for i in items if i.get("__table__") == "events"]
-            facts = [i for i in items if i.get("__table__") == "facts"]
-            chunks = [i for i in items if i.get("__table__") == "chunks"]
-            meta = memory_store.get_meta(f"summ:{sid}") or {"boundary": 0}
-            with session.lock:
-                total = len(session.messages)
-            self._json(
-                {
-                    "scope": scope,
-                    "counts": {
-                        "events": len(events),
-                        "facts": len(facts),
-                        "chunks": len(chunks),
-                    },
-                    "arc": memory_store.get_summary(f"arc:{scope}"),
-                    "arc_key": f"arc:{scope}",
-                    "session_summary": memory_store.get_summary(f"session:{sid}"),
-                    "session_key": f"session:{sid}",
-                    "events": events,
-                    "facts": facts,
-                    "meta": {
-                        "boundary": meta.get("boundary", 0),
-                        "total_messages": total,
-                        "state": meta.get("state", "idle"),
-                        "last_status": meta.get("last_status"),
-                        "last_time": meta.get("last_time"),
-                        "last_error": meta.get("last_error"),
-                    },
-                }
-            )
             return
 
         # ================= Code Agent（薄路由） =================

@@ -154,3 +154,20 @@
       假 Handler 实测 /api/clear（清空+置中断+无响应，与旧行为一致）、/api/done（返回 ok）命中正确；
       未迁移路由（/api/prompts/save）正确回落旧链。
 - server.py 累计：3754 -> 1400 行级别。旧链剩约 52 条路由（prompts/sessions/presets/config/memory/worldbook/GET 等）。
+
+## 模块化拆分 (server 瘦身, 第 10 刀: config 路由域)
+- [x] routes/config_routes.py：toggle_mode / config·save / test_models / notify·test (POST) + /api/config (GET)。
+- [x] __init__ 注册；do_POST 删 4 条（中段 elif 安全移除）、do_GET 删 /api/config 块。
+      NO_SESSION_POST_PATHS 里的同名字符串保留（控制 session=None，仍需要）。
+- 验证：py_compile 通过；import server OK；注册 POST 23 / GET 9；
+      实测 toggle_mode 翻转模式返回 ok、GET /api/config 返回配置字典；未迁移路由正常回落。
+- server.py 累计：3754 -> 1360 行级别。旧链剩约 47 条（prompts/sessions/presets/memory/worldbook/GET）。
+
+## 模块化拆分 (server 瘦身, 第 11 刀: memory + worldbook + lore 路由域)
+- [x] routes/memory_routes.py：11 POST（memory summarize/edit/forget、lore create/update/delete/reindex、
+      worldbooks create/update/delete/session·set）+ 7 GET（memory context/search/list/overview、lore、
+      worldbooks list/session）。
+- [x] 注册；do_POST 删 memory POST 整段（到 /api/outreach 前），do_GET 逐块删（跳过夹在中间的 /api/outreach）。
+- 验证：py_compile + import OK；注册 POST 34 / GET 16；/api/outreach 两个动词仍留旧链、super().do_GET() 兜底在；
+      worldbooks/list 分发实测正确。
+- server.py 累计：3754 -> 1050 行级别。旧链剩 prompts/sessions/presets/outreach + 零散 GET。
