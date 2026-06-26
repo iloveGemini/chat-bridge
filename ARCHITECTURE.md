@@ -189,6 +189,15 @@ Injectable = {
 **最大的坑：在只有一个真实 agent 时，就照着想象中的三个 agent 去抽象。**
 接口要从手上已有的两个具体 agent（coding + RP）归纳，不要凭空设计第三个。
 
+### 实现现状（基座已落地，未接入 server 热路径）
+- `agents/base.py`：`AgentContext`(状态信封) / `AgentResult{status,output,next_hint}`(交接协议) /
+  `BaseAgent`(agent_type + default_tool_grant + run) + 注册表(register/get/all)。四插槽预留，当前仅 tool_grant 落实。
+- `agents/manager.py`：`BaseManager.route()/dispatch()` + `StaticManager`(死代码路由，缺省回落 rp)；
+  import 即注册内置 agent。以后换 `LLMManager(BaseManager)` 同接口、agent 不动。
+- 适配器(不改原实现，仅包一层)：`agents/coding/agent.py` `CodingAgent`(包 orchestrator)、
+  `agents/rp/agent.py` `RPChatAgent`(包 call_llm_api)。各自声明 `default_tool_grant`，供 §4 统一 RBAC。
+- **未做**：把 Manager 接进 server 热路径（现仍 server 直连 orchestrator / call_llm_api，行为不变）。
+
 ---
 
 ## 6. 模型与推理参数（Model & Sampling）
@@ -250,7 +259,8 @@ coder 默认 temp≈0.2、RP 默认 temp≈0.8，preset 再覆盖。对纯聊天
 
 | 设计概念 | 现有落点 / 演进方向 |
 |----------|---------------------|
-| BaseAgent 四插槽 | `agents/base.py`（已占位，待填充） |
+| BaseAgent 四插槽 | `agents/base.py`（契约+注册表已落地；四插槽仅 tool_grant 落实，余预留） |
+| Manager / 适配器 | `agents/manager.py`(StaticManager) + `agents/{coding,rp}/agent.py`（已落地，未接 server） |
 | coding 思考链 | `agents/coding/orchestrator.py` 的 5 相位（已实现，即确定性 CoT） |
 | prompt 解耦 | `agents/coding/prompts/*.md` + `prompts/prompts.py`（已解耦，待加 _defaults/三级覆盖） |
 | 统一注入管道 | `memory/memory.py` 的 `build_injected_memory` + `memory_store` 的 lore（待合流 + 加 position） |
