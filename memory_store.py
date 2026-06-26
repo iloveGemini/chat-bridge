@@ -665,6 +665,17 @@ def delete_scope(scope: str, session_id: str) -> dict:
 
 # ==================== 最终上下文拼装核心 ====================
 
+# §3 记忆段→注入位置映射（可调）。before=贴系统头(常驻)，after=贴尾部(召回)。
+# lore(世界书)按每条 position 字段独立分桶，不在此表。改这里即可调整某段的归属。
+SECTION_POSITION = {
+    "fact_graph": "before",            # 硬事实：常驻
+    "relation_arc": "before",          # 关系弧：常驻
+    "recent_state": "before",          # 会话近况(当前状态)：常驻
+    "episodic_memory_chain": "after",  # 相似回忆：本轮召回
+    "original_dialogue": "after",      # 原文细节：本轮召回
+}
+
+
 def build_memory_context(scope: str, session_id: str, *, query_vec: Optional[list[float]] = None,
                          query_text: str = "", top_k: int = 5, recall_n: int = 30,
                          lore_scan: str = "", lore_sem_topk: int = 3,
@@ -676,6 +687,13 @@ def build_memory_context(scope: str, session_id: str, *, query_vec: Optional[lis
     传入 diag={} 可拿到本次召回的可观测诊断（模式/分数/命中/去重），用于日志。
     lore_scan：世界书扫描文本（当前消息+近况+场景地点/时间），命中才注入设定。"""
     sections = []
+
+    def _emit_section(name, block):
+        # 段级位置路由；before_out 缺省时回落 after，避免不分桶的旧调用丢内容。
+        if SECTION_POSITION.get(name, "after") == "before" and before_out is not None:
+            before_out.append(block)
+        else:
+            sections.append(block)
 
     # 0. 世界书段（静态设定，舞台背景，放最前）：always_on 常驻 + 关键词触发
     # 世界书已与记忆 scope 解耦：lore_scopes 为本会话适用的多本世界书 scope（绑角色/绑用户/手动挂）。
@@ -709,21 +727,21 @@ def build_memory_context(scope: str, session_id: str, *, query_vec: Optional[lis
     facts = get_facts(scope)
     if facts:
         facts_lines = [f"{f['subject']} {f['predicate']} {f['object']}" for f in facts]
-        sections.append(f"<fact_graph>\n" + "\n".join(facts_lines) + "\n</fact_graph>")
+        _emit_section("fact_graph", f"<fact_graph>\n" + "\n".join(facts_lines) + "\n</fact_graph>")
     if diag is not None:
         diag["facts"] = len(facts)
 
     # 2. 角色关系摘要
     arc_summary = get_summary(f"arc:{scope}")
     if arc_summary and arc_summary.strip():
-        sections.append(f"<relation_arc>\n{arc_summary.strip()}" + "\n</relation_arc>")
+        _emit_section("relation_arc", f"<relation_arc>\n{arc_summary.strip()}" + "\n</relation_arc>")
     if diag is not None:
         diag["arc"] = bool(arc_summary and arc_summary.strip())
 
     # 3. 临近会话进展
     session_summary = get_summary(f"session:{session_id}")
     if session_summary and session_summary.strip():
-        sections.append(f"<recent_state>\n{session_summary.strip()}" + "\n</recent_state>")
+        _emit_section("recent_state", f"<recent_state>\n{session_summary.strip()}" + "\n</recent_state>")
     if diag is not None:
         diag["session"] = bool(session_summary and session_summary.strip())
 
@@ -731,7 +749,7 @@ def build_memory_context(scope: str, session_id: str, *, query_vec: Optional[lis
     events = recall_events(scope, query_vec=query_vec, query_text=query_text, k=top_k, recall_n=recall_n)
     event_summaries = [e['summary'] for e in events if e.get('summary')]
     if event_summaries:
-        sections.append(f"<episodic_memory_chain>\n" + "\n".join(event_summaries) + "\n</episodic_memory_chain>")
+        _emit_section("episodic_memory_chain", f"<episodic_memory_chain>\n" + "\n".join(event_summaries) + "\n</episodic_memory_chain>")
     if diag is not None:
         for e in events:
             s = e.get("summary", "")
@@ -756,7 +774,7 @@ def build_memory_context(scope: str, session_id: str, *, query_vec: Optional[lis
         valid_chunks.append(f"{spk}：{c_text}" if spk else c_text)
 
     if valid_chunks:
-        sections.append(f"<original_dialogue>\n" + "\n".join(valid_chunks) + "\n</original_dialogue>")
+        _emit_section("original_dialogue", f"<original_dialogue>\n" + "\n".join(valid_chunks) + "\n</original_dialogue>")
 
     if diag is not None:
         diag["empty"] = len(sections) == 0

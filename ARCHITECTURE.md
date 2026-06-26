@@ -139,6 +139,16 @@ Injectable = {
 - **新增字段**：给 worldbook 条目和 memory 项都加 `position`（Before_Message / After_Message）。
 - 推论：§0 的 `context_provider` 退化为「喂不同 source + 设默认 position 策略」，又省一层。
 
+### 实现现状（已落地）
+- **lore（世界书）**：每条带 `position` 字段（DB 列，默认 `after`）；`add_lore`/`update_lore` 可设；
+  `build_memory_context` 按每条 position 分桶。
+- **memory 段**：`memory_store.SECTION_POSITION` 表统一映射——`fact_graph`/`relation_arc`/`recent_state`
+  → before（常驻，进系统头），`episodic_memory_chain`/`original_dialogue` → after（召回，贴尾部）。改表即调。
+- **回落保护**：`build_memory_context(before_out=None)` 时 before 段回落 after，旧调用不丢内容。
+- **管道**：`build_injected_memory` 返回 `{before, after}` → PromptAssembler 的 `Memory_before`(系统头,
+  `<persistent_memory>`) / `Memory_after`(尾部, `<recalled_memory>`) 两槽。
+- **未做**：trigger 轴的语义/关键词统一、priority 跨 source 统一排序、前端 before/after 选择 UI。
+
 ---
 
 ## 4. 工具模块化（Tools）—— 现状即设计
