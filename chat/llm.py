@@ -8,9 +8,8 @@ import time
 from core.config import config, load_config as _load_config
 from core.net import log_print, _http_post_json
 from core.paths import ROOT, PROMPTS_DIR, SESSIONS_DIR
-from prompts.prompts import (
-    _get_display_name, _apply_macros, build_header_prompt, build_tail_anchor,
-)
+from prompts.prompts import _get_display_name, _apply_macros
+from prompts.assembler import PromptAssembler
 from memory.memory import (
     build_injected_memory, _memory_cfg, _needs_summary, summarize_session, _lore_embedding,
 )
@@ -70,18 +69,13 @@ def call_llm_api(session_id):
             "user", session.active_prompts.get("user"), "用户"
         )
 
-    # 1. 顶部静态人设 (带宏替换)
-    header_prompt = _apply_macros(build_header_prompt(session), char_name, user_name)
-
-    # 2. 锁外检索动态记忆 (带宏替换)
+    # 1~3. 用 PromptAssembler 按槽位骨架组装（行为与原 build_header/tail 等价）
+    asm = PromptAssembler(session)
+    header_prompt = asm.build_system_head(char_name, user_name)
     memory_str = _apply_macros(
         build_injected_memory(session, last_user_text), char_name, user_name
     )
-
-    # 3. 生成尾部锚定块 (带宏替换)
-    tail_anchor = _apply_macros(
-        build_tail_anchor(session, memory_str), char_name, user_name
-    )
+    tail_anchor = asm.build_tail(char_name, user_name, memory_str)
 
     # 4. 极其优雅地拼装三明治上下文
     api_messages = [{"role": "system", "content": header_prompt}]

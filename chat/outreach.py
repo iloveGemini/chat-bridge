@@ -4,9 +4,8 @@ import time
 
 from core.config import config, load_config as _load_config
 from core.net import log_print, _http_post_json
-from prompts.prompts import (
-    _get_display_name, _apply_macros, build_header_prompt, build_tail_anchor,
-)
+from prompts.prompts import _get_display_name, _apply_macros
+from prompts.assembler import PromptAssembler
 from memory.memory import build_injected_memory, _memory_cfg
 from chat.envelope import ingest_reply
 from chat.scene import _scene_stamp
@@ -40,13 +39,12 @@ def _generate_proactive_message(session, intention):
         "character", session.active_prompts.get("character"), "AI助手"
     )
     user_name = _get_display_name("user", session.active_prompts.get("user"), "用户")
-    header_prompt = _apply_macros(build_header_prompt(session), char_name, user_name)
+    asm = PromptAssembler(session)
+    header_prompt = asm.build_system_head(char_name, user_name)
     memory_str = _apply_macros(
         build_injected_memory(session, intention or ""), char_name, user_name
     )
-    tail_anchor = _apply_macros(
-        build_tail_anchor(session, memory_str), char_name, user_name
-    )
+    tail_anchor = asm.build_tail(char_name, user_name, memory_str)
 
     with session.lock:
         recent = [
