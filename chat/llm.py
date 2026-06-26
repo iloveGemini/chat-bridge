@@ -20,7 +20,7 @@ from chat.outreach import _exec_outreach_tool
 from session.session import get_session
 from session.tools import get_session_tools, SESSION_TOOL_KEYS
 from tools.registry import resolve_tools
-import tooling
+from tools import registry as tools_registry
 import memory_store
 from agents.engine import run_tool_loop
 
@@ -240,7 +240,7 @@ def call_llm_api(session_id):
                 print(f"   > 读取文件: {a.get('filepath')}")
 
         def _execute(fname, a):
-            if fname in tooling.CODING_TOOL_NAMES:
+            if fname in tools_registry.CODING_TOOL_NAMES:
                 context = {
                     "root_dir": ROOT,
                     "prompts_dir": PROMPTS_DIR,
@@ -250,7 +250,7 @@ def call_llm_api(session_id):
                     "memory_store": memory_store,
                     "embed_cb": _lore_embedding,
                 }
-                return tooling.execute_tool(fname, a, context)
+                return tools_registry.execute_tool(fname, a, context)
             return _exec_outreach_tool(fname, a, session_id)
 
         def _on_tool_result(fname, a, r, tc):

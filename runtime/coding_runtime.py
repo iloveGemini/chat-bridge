@@ -27,7 +27,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-import tooling
+from tools import registry as tools_registry
 
 # ---------------------------------------------------------------------------
 # 路径与配置
@@ -441,7 +441,7 @@ def _render_pinned_context(task):
     for e in entries:
         fp, mode = e["filepath"], e.get("mode", "outline")
         if mode == "full":
-            r = tooling.execute_tool("read_file_with_lines", {"filepath": fp}, ctx)
+            r = tools_registry.execute_tool("read_file_with_lines", {"filepath": fp}, ctx)
             if r.get("error"):
                 body = f"(读取失败: {r['error']})"
             else:
@@ -453,7 +453,7 @@ def _render_pinned_context(task):
                 body = content
             blocks.append(f"### {fp} (全代码)\n{body}")
         else:
-            r = tooling.execute_tool("get_outline", {"filepath": fp}, ctx)
+            r = tools_registry.execute_tool("get_outline", {"filepath": fp}, ctx)
             if r.get("error"):
                 body = f"(大纲失败: {r['error']})"
             else:
@@ -859,7 +859,7 @@ WORKER_SYSTEM_PROMPT = (
 def get_worker_tools():
     return [
         t
-        for t in tooling.get_coding_tools()
+        for t in tools_registry._grp_coding()
         if t.get("function", {}).get("name") in WORKER_TOOL_NAMES
     ]
 
@@ -979,7 +979,7 @@ def run_worker(task, subtask, ctx):
                     f"  ↪ worker[{sid}] {fname} {json.dumps(fargs, ensure_ascii=False)[:50]}"
                 )
                 if fname in WORKER_TOOL_NAMES:
-                    r = tooling.execute_tool(fname, fargs, ctx)
+                    r = tools_registry.execute_tool(fname, fargs, ctx)
                 else:
                     r = {"error": f"只读 worker 不允许工具: {fname}"}
                 msgs.append(
@@ -1125,12 +1125,12 @@ def run_agent_turn(task_id, user_msg, on_event=None):
         api_messages = _build_messages(task, checkpoint, recent, None)
 
         ctx = _sandbox_context(task)
-        tools = tooling.get_coding_tools() + get_orchestration_tools()
+        tools = tools_registry._grp_coding() + get_orchestration_tools()
         if confirm_round:
             # 确认轮只给【只读】工具：能看文件弄清现状好提问，但不能改/不能跑/不能落盘
             tools = [
                 t
-                for t in tooling.get_coding_tools()
+                for t in tools_registry._grp_coding()
                 if t.get("function", {}).get("name") in READONLY_TOOL_NAMES
             ]
             api_messages.append(
@@ -1242,7 +1242,7 @@ def run_agent_turn(task_id, user_msg, on_event=None):
                     )
                 if _fname == "unpin_file":
                     return remove_context(task_id, _fargs.get("filepath"))
-                if _fname in tooling.CODING_TOOL_NAMES:
+                if _fname in tools_registry.CODING_TOOL_NAMES:
                     if _enforce_workflow() and _fname in (
                         "apply_file_edits",
                         "batch_write_files",
@@ -1264,7 +1264,7 @@ def run_agent_turn(task_id, user_msg, on_event=None):
                         _fargs.get("command", "")
                     ):
                         _venv_ensure(task)
-                    return tooling.execute_tool(_fname, _fargs, ctx)
+                    return tools_registry.execute_tool(_fname, _fargs, ctx)
                 return {"error": f"该 agent 不支持工具: {_fname}"}
 
             # 2) 同一批全是只读工具且不止一个 → 并发；否则顺序（写/执行类避免竞态）

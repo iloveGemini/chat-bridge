@@ -26,6 +26,9 @@ _load_package(tools.coding)
 _load_package(tools.rp)
 _load_package(tools.common)
 
+CODING_TOOL_NAMES = {name for name, meta in _REGISTRY.items() if meta["category"] == "coding"}
+
+# 角色权限映射表 (RBAC)
 # 角色权限映射表 (RBAC)
 ROLE_PERMISSIONS = {
     # 规划者只规划/提问，不自己读文件——把"找资料"交给跑得快的 searcher(worker_api)，
@@ -78,8 +81,7 @@ def _grp_outreach():
 
 
 def _grp_coding():
-    import tooling
-    return tooling.get_coding_tools()
+    return [meta["schema"] for name, meta in _REGISTRY.items() if meta["category"] == "coding"]
 
 
 def _grp_web():
