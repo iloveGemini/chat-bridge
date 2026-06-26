@@ -171,3 +171,13 @@
 - 验证：py_compile + import OK；注册 POST 34 / GET 16；/api/outreach 两个动词仍留旧链、super().do_GET() 兜底在；
       worldbooks/list 分发实测正确。
 - server.py 累计：3754 -> 1050 行级别。旧链剩 prompts/sessions/presets/outreach + 零散 GET。
+
+## 模块化拆分 (server 瘦身, 第 12 刀: prompt/preset/session 路由域)
+- [x] PROMPT_CATEGORIES/PRESET_CATEGORIES 迁入 prompts.prompts（server 与路由层共用）。
+- [x] routes/prompt_routes.py：12 POST（prompts save/delete/use/set_default_user、sessions create/delete/
+      rename/clone/pin、presets save/delete/apply）+ 5 GET（sessions/list、presets list/get、prompts list/get）。
+- [x] 注册；do_POST 删整段（prompts/save→outreach 前，outreach elif 转 if 保链）、do_GET 逐块删 5 个。
+- 验证：py_compile + import OK；注册 POST 46 / GET 21；presets/list、prompts/list、prompts/get 带 session 实测正确；
+      /api/outreach 仍回落旧链。
+- server.py 累计：3754 -> 700 行级别。旧链仅剩 outreach(3) + 零散 GET(messages/tools/status/typing_status/
+      wait_pending/debug·last_prompt) + login。

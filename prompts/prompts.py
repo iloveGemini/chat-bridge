@@ -132,3 +132,8 @@ def build_tail_anchor(session, memory_str=""):
         # 用显式系统控制块包裹，防止 AI 误以为这些指令是普通用户打出来的字
         return f"\n\n\n<system_guidance>\n{compiled}\n</system_guidance>"
     return ""
+
+
+# 提示词大类常量（从 server.py 迁来，供路由层与初始化共用）
+PRESET_CATEGORIES = ["main", "style", "post"]
+PROMPT_CATEGORIES = ["main", "character", "user", "style", "post"]

@@ -8,5 +8,6 @@ from routes import agent_routes  # noqa: F401  （import 触发注册）
 from routes import chat_routes  # noqa: F401
 from routes import config_routes  # noqa: F401
 from routes import memory_routes  # noqa: F401
+from routes import prompt_routes  # noqa: F401
 
 __all__ = ["dispatch_post", "dispatch_get"]
