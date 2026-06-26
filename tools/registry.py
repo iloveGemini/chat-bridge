@@ -29,7 +29,7 @@ _load_package(tools.common)
 # 角色权限映射表 (RBAC)
 ROLE_PERMISSIONS = {
     "planner": ["ask_user_clarification", "update_plan"], # 规划者可以提问和更新计划
-    "searcher": ["read_file_with_lines", "grep_files", "glob_files", "get_outline", "get_function_code"], # 侦察兵只能读
+    "searcher": ["read_file_with_lines", "grep_files", "glob_files", "get_outline", "get_function_code", "smart_file_insight"], # 侦察兵只能读
     "coder": [], # 纯写代码，不直接调工具
     "writer": ["apply_file_edits", "batch_write_files", "replace_in_file"], # 打字员只能写
     "checker": ["run_terminal_command"], # 测试员只能跑命令

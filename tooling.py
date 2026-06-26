@@ -343,6 +343,25 @@ def get_coding_tools():
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "smart_file_insight",
+                "description": "高级文件洞察工具。一次性获取文件的总行数，并同时搜索多个正则模式。等效于在终端同时运行 wc -l 和多次 grep，是快速了解陌生大文件的最佳手段！",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "filepath": {"type": "string", "description": "要洞察的文件路径"},
+                        "patterns": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "要同时搜索的多个关键字或正则表达式列表。例如 ['思考|reasoning', 'timestamp|time']"
+                        }
+                    },
+                    "required": ["filepath", "patterns"]
+                }
+            }
+        },
     ]
 
 
@@ -679,6 +698,51 @@ def execute_tool(name, args, context):
             except SyntaxError as e:
                 return {"error": f"解析失败: {e}"}
             except ValueError as e:
+                return {"error": str(e)}
+
+        if name == "smart_file_insight":
+            try:
+                target_file = safe_resolve(args.get("filepath"))
+                if not target_file.exists() or not target_file.is_file(): 
+                    return {"error": "文件不存在"}
+                
+                patterns = args.get("patterns", [])
+                if not isinstance(patterns, list): patterns = [patterns]
+                
+                try:
+                    lines = target_file.read_text(encoding="utf-8").splitlines()
+                except UnicodeDecodeError:
+                    return {"error": "该文件无法以文本(UTF-8)格式读取"}
+                
+                total_lines = len(lines)
+                out = [f"=== {target_file.name} 概览 ==="]
+                out.append(f"总行数: {total_lines}")
+                
+                import re
+                for pat in patterns[:5]:
+                    out.append(f"\n=== 搜索 /{pat}/ ===")
+                    try:
+                        regex = re.compile(pat, re.IGNORECASE)
+                    except Exception:
+                        out.append("  [无效的正则表达式]")
+                        continue
+                        
+                    matches = []
+                    for i, line in enumerate(lines):
+                        if regex.search(line):
+                            safe_line = line.strip()[:200]
+                            matches.append(f"{str(i+1).rjust(4)} | {safe_line}")
+                        if len(matches) >= 30: 
+                            matches.append("  ... (结果过多，已强制截断前 30 行)")
+                            break
+                            
+                    if matches:
+                        out.extend(matches)
+                    else:
+                        out.append("  [未找到匹配项]")
+                        
+                return {"result": "\n".join(out)}
+            except Exception as e: 
                 return {"error": str(e)}
 
         return {"error": f"未知工具: {name}"}
