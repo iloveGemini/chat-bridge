@@ -8,7 +8,7 @@ from session.session import get_session
 # ====== 会话级工具授权（按会话窗口逐个授权，而非全局总开关）======
 SESSION_TOOL_KEYS = ("outreach", "web", "coding")
 # 默认值与前端开关一致：主动联系默认开，联网检索 / 本地项目操控默认关。
-SESSION_TOOL_DEFAULTS = {"outreach": True, "web": False, "coding": False}
+SESSION_TOOL_DEFAULTS = {"outreach": True, "web": False, "coding": True}
 
 
 def get_session_tools(session_id):

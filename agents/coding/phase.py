@@ -18,7 +18,7 @@ from agents.engine import run_tool_loop
 from agents.coding.roles import ROLE_PROMPTS
 from agents.base import BaseAgent, AgentContext, AgentResult, register_agent
 
-CODING_ROLES = ("planner", "searcher", "coder", "writer", "checker")
+CODING_ROLES = ("planner", "searcher", "developer", "checker")
 
 
 def _role_base_default(role):
@@ -71,8 +71,8 @@ def run_phase(role, handoff, *, chat_fn, tool_ctx, task_id,
                 pass
 
     def _on_content(content):
-        # [NEED_USER] 是给编排器看的暂停标记，不展示给用户
-        c = (content or "").replace("[NEED_USER]", "").strip()
+        # [NEED_USER]/[NEED_SEARCH] 是给编排器看的控制标记，不展示给用户
+        c = (content or "").replace("[NEED_USER]", "").replace("[NEED_SEARCH]", "").strip()
         if c:
             agent.add_turn(task_id, "assistant", "text", f"[{role}] {c}")
             _emit("assistant", f"[{role}] {c}")

@@ -160,6 +160,36 @@ class CodeAgentView {
         e.input.value = reply;
         this.onSend();
       }
+
+      // 「确认完成」：关闭工单
+      if (ev.target.classList.contains("ca-confirm-btn")) {
+        ev.target.disabled = true;
+        ev.target.textContent = "确认中...";
+        api
+          .agentConfirm(this.currentTaskId)
+          .then((r) => {
+            if (r && r.ok) {
+              showToast("已确认完成，工单关闭");
+              this.poll();
+            } else {
+              showToast((r && r.error) || "确认失败");
+              ev.target.disabled = false;
+              ev.target.textContent = "确认完成";
+            }
+          })
+          .catch(() => {
+            showToast("确认失败");
+            ev.target.disabled = false;
+            ev.target.textContent = "确认完成";
+          });
+      }
+
+      // 「返工」：把光标放回输入框，等用户写反馈再发（保留整个工单上下文继续）
+      if (ev.target.classList.contains("ca-rework-btn")) {
+        e.input.value = e.input.value || "返工：";
+        e.input.focus();
+        showToast("写下要返工/修改的点，发送即可继续（上下文不丢）");
+      }
     });
   }
 
@@ -285,6 +315,17 @@ class CodeAgentView {
 
     if (type === "reasoning") {
       this.messages.push({ role: "thinking", text: t.content, time: "" });
+      return;
+    }
+
+    if (type === "confirm_card") {
+      let summary = "";
+      try {
+        summary = (JSON.parse(t.content) || {}).summary || "";
+      } catch (e) {
+        summary = t.content || "";
+      }
+      this.messages.push({ role: "confirm", summary, pending: true });
       return;
     }
 
@@ -789,6 +830,23 @@ class CodeAgentView {
           subsequentUserMessage.text.includes("【需求确认回复】");
 
         html += this._renderClarificationCard(m, isAnswered);
+      } else if (m.role === "confirm") {
+        // 检查这张确认卡之后是否已有「已确认完成」系统消息 → 已处理则不再显示按钮
+        const idx = this.messages.indexOf(m);
+        const done = this.messages
+          .slice(idx + 1)
+          .some((x) => x.role === "sys" && /已确认完成/.test(x.text || ""));
+        html += `
+          <div class="terminal-msg" style="background:#1e2d24;border:1px solid #2e6b4f;border-radius:6px;padding:12px;margin:8px 0;">
+            <div style="color:#4ec9b0;font-weight:bold;margin-bottom:8px;">✅ 验证通过，待你确认</div>
+            <div style="white-space:pre-wrap;color:#cfe;margin-bottom:10px;font-size:13px;">${escHtml(m.summary || "改动已完成。")}</div>
+            ${done
+              ? `<div style="color:#4ec9b0;">已确认完成</div>`
+              : `<div style="text-align:right;display:flex;gap:8px;justify-content:flex-end;">
+                   <button class="ca-rework-btn" style="background:transparent;color:#e0a458;border:1px solid #e0a458;padding:6px 14px;border-radius:5px;cursor:pointer;">返工</button>
+                   <button class="ca-confirm-btn" style="background:#2e6b4f;color:#fff;border:none;padding:6px 14px;border-radius:5px;cursor:pointer;">确认完成</button>
+                 </div>`}
+          </div>`;
       } else if (m.role === "ai") {
         html += `<div class="terminal-msg agent-reply">${renderMarkdown(m.text)}</div>`;
       }

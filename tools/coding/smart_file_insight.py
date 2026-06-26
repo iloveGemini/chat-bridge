@@ -6,7 +6,7 @@ def get_schema():
     return {
         "type": "function", "function": {
             "name": "smart_file_insight",
-            "description": "高级文件洞察工具。一次性获取文件总行数，并同时搜索多个正则模式；可带上下文行(context)看命中行前后，可用 offset 翻页看更多命中。等效于在终端同时跑 wc -l 与多次 grep -n -C，是快速摸清陌生大文件的最佳手段！",
+            "description": "在文件里找东西的首选工具：一次拿到总行数 + 多个关键词/正则的全部命中(带行号，可带前后 context 上下文，可 offset 翻页)。等价于一次跑完 wc -l 加多个 grep -n -C，任意大小的文件都适用——要在某个文件里定位代码/符号/用法时，**优先用它，别再用 grep_files**。注意：它只返回命中行+上下文，要通读整段/整文件请用 read_file_with_lines。",
             "parameters": {"type": "object", "properties": {
                 "filepath": {"type": "string", "description": "要洞察的文件路径"},
                 "patterns": {

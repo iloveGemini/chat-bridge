@@ -75,6 +75,23 @@ def _interrupt(h, query, session, session_id):
     h._json({"ok": True})
 
 
+@post("/api/agent/confirm")
+def _confirm(h, query, session, session_id):
+    """用户确认「待确认」的工单 → 真正完结。校验只是静态/能起，
+    是否满足需求由用户拍板，确认后才置完成。"""
+    data = h._read_json()
+    tid = data.get("task_id")
+    if not tid:
+        h._json({"ok": False, "error": "task_id 必填"})
+        return
+    if agent.is_running(tid):
+        h._json({"ok": False, "error": "任务运行中，无法确认"})
+        return
+    agent.add_turn(tid, "system", "text", "✅ 用户已确认完成，工单关闭")
+    agent.update_task(tid, status="已完成", progress=100)
+    h._json({"ok": True})
+
+
 @post("/api/agent/enqueue")
 def _enqueue(h, query, session, session_id):
     data = h._read_json()

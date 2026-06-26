@@ -28,10 +28,17 @@ _load_package(tools.common)
 
 # 角色权限映射表 (RBAC)
 ROLE_PERMISSIONS = {
-    "planner": ["ask_user_clarification", "update_plan"], # 规划者可以提问和更新计划
+    # 规划者要先读懂代码再规划：给只读工具 + 提问 + 更新计划（仍不写不跑）
+    "planner": ["ask_user_clarification", "update_plan",
+                "read_file_with_lines", "grep_files", "glob_files",
+                "get_outline", "get_function_code", "smart_file_insight"],
     "searcher": ["read_file_with_lines", "grep_files", "glob_files", "get_outline", "get_function_code", "smart_file_insight"], # 侦察兵只能读
     "coder": [], # 纯写代码，不直接调工具
     "writer": ["apply_file_edits", "batch_write_files", "replace_in_file"], # 打字员只能写
+    # developer = coder+writer 合并：能读侦察 + 直接落地修改
+    "developer": ["read_file_with_lines", "grep_files", "glob_files", "get_outline",
+                  "get_function_code", "smart_file_insight",
+                  "apply_file_edits", "batch_write_files", "replace_in_file"],
     "checker": ["run_terminal_command"], # 测试员只能跑命令
     "rp_character": ["list_lore", "get_prompt"], # RP 角色只能读设定
     "gm": ["add_lore", "update_lore", "delete_lore"], # GM 可以改设定

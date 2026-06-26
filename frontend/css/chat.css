@@ -87,8 +87,8 @@
   flex-shrink: 0;
   width: 48px;
   height: 48px;
-  display: flex;
-  align-items: center;
+    width: 38px;
+    height: 38px;
   justify-content: center;
   background: var(--active-color);
   color: #fff;
@@ -100,9 +100,8 @@
 .send-btn svg {
   margin-left: 2px; /* optical center adjustment for play/send icon */
 }
-.send-btn:active { opacity: 0.8; }
-.send-btn.generating-stop svg {
-  margin-left: 0;
+.send-btn svg {
+    display: block;
 }
 
 .msg-time {

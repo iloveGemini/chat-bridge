@@ -526,11 +526,29 @@ def _chat(cfg_key, messages, tools=None, temperature=0.3, timeout=120):
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
-    _rate_limiter.acquire(rl_key, rpm)
-    _log(
-        f"↗ LLM {rl_key}/{payload['model']} ctx={len(messages)} tools={'Y' if tools else 'N'} (rpm{rpm})"
-    )
-    return _http_post(url, payload, cfg.get("api_key", ""), timeout)
+
+    import socket
+    import urllib.error
+
+    attempts = 3
+    for _i in range(attempts):
+        _rate_limiter.acquire(rl_key, rpm)
+        _log(
+            f"↗ LLM {rl_key}/{payload['model']} ctx={len(messages)} tools={'Y' if tools else 'N'} (rpm{rpm})"
+            + (f" 第{_i + 1}次重试" if _i else "")
+        )
+        try:
+            return _http_post(url, payload, cfg.get("api_key", ""), timeout)
+        except urllib.error.HTTPError:
+            raise  # 服务端明确返回了错误码（4xx/5xx），重试无意义
+        except (socket.timeout, TimeoutError, urllib.error.URLError,
+                ConnectionError, OSError) as e:
+            if _i == attempts - 1:
+                _log(f"⚠ LLM 调用第{_i + 1}次仍失败，放弃：{e}")
+                raise
+            wait = min(8.0, 2.0 * (_i + 1))
+            _log(f"⚠ LLM 调用失败({_i + 1}/{attempts})：{e}，{wait:.0f}s 后重试")
+            time.sleep(wait)
 
 
 # ---------------------------------------------------------------------------
