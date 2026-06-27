@@ -134,7 +134,7 @@ def run_phase(role, handoff, *, chat_fn, tool_ctx, task_id,
     if stop == "intercepted":
         return {"clarify": True, "clarify_payload": out["intercept"]["payload"], "text": content}
     # no_tools(正常给出结论) 与 max_rounds(用满轮数) 都要把结果带出，绝不能丢
-    return {"text": text}
+    return {"text": text, "stop": stop}
 
 
 class CodingPhaseAgent(BaseAgent):
@@ -165,6 +165,7 @@ class CodingPhaseAgent(BaseAgent):
             max_rounds=sh.get("max_rounds", 6),
         )
         ctx.shared[f"{self.role}_text"] = res.get("text", "")
+        ctx.shared[f"{self.role}_stop"] = res.get("stop")
         if res.get("cancelled"):
             return AgentResult(status="need_user", output="", next_hint="cancelled")
         if res.get("clarify"):
