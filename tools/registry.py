@@ -6,7 +6,7 @@ from pathlib import Path
 import tools.coding
 import tools.rp
 import tools.common
-
+import tools.web
 _REGISTRY = {}
 
 def _load_package(pkg):
@@ -25,7 +25,7 @@ def _load_package(pkg):
 _load_package(tools.coding)
 _load_package(tools.rp)
 _load_package(tools.common)
-
+_load_package(tools.web)
 CODING_TOOL_NAMES = {name for name, meta in _REGISTRY.items() if meta["category"] == "coding"}
 
 # 角色权限映射表 (RBAC)
@@ -41,7 +41,7 @@ ROLE_PERMISSIONS = {
     "developer": ["read_file_with_lines", "grep_files", "glob_files", "get_outline",
                   "get_function_code", "smart_file_insight",
                   "apply_file_edits", "batch_write_files", "replace_in_file"],
-    "checker": ["run_terminal_command"], # 测试员只能跑命令
+    "checker": ["run_terminal_command", "run_playwright_script"], # 测试员只能跑命令和执行网页脚本
     "rp_character": ["list_lore", "get_prompt"], # RP 角色只能读设定
     "gm": ["add_lore", "update_lore", "delete_lore", "add_memory", "get_memories", "rename_memory_folder", "delete_memory_folder", "set_memory_folder_resident"], # GM 可以改设定和记忆
     # 兼容老版本的全量权限
@@ -85,12 +85,10 @@ def _grp_coding():
 
 
 def _grp_web():
-    return []  # 预留：联网检索工具，暂无
-
+    return [meta["schema"] for name, meta in _REGISTRY.items() if meta["category"] == "web"]
 
 def _grp_memory():
-    return [meta["schema"] for name, meta in _REGISTRY.items() if meta["category"] == "rp"]
-
+    return []
 
 TOOL_GROUPS = {
     "outreach": _grp_outreach,

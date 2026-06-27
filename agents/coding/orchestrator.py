@@ -28,9 +28,9 @@ DISPATCHABLE = ("searcher", "developer", "checker")
 WORKER_ENDPOINT = {
     "searcher": "worker_api",
     "developer": "api",
-    "checker": "worker_api",
+    "checker": "api",
 }
-WORKER_MAX_ROUNDS = {"searcher": 14, "developer": 20, "checker": 8}
+WORKER_MAX_ROUNDS = {"searcher": 20, "developer": 20, "checker": 20}
 MAX_MANAGER_ROUNDS = 16  # 项目经理最多调度多少轮，封顶防失控
 
 
