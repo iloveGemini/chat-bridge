@@ -16,7 +16,6 @@ Coding Agent 的核心调度器 —— planner 即「项目经理」的动态调
 
 import json
 
-
 import runtime.coding_runtime as agent
 from agents.base import AgentContext, AgentResult, get_agent
 from agents.coding import phase as _phase  # noqa: F401  (导入即注册各相位叶子)
@@ -31,7 +30,7 @@ WORKER_ENDPOINT = {
     "developer": "api",
     "checker": "worker_api",
 }
-WORKER_MAX_ROUNDS = {"searcher": 14, "developer": 12, "checker": 8}
+WORKER_MAX_ROUNDS = {"searcher": 14, "developer": 20, "checker": 8}
 MAX_MANAGER_ROUNDS = 16  # 项目经理最多调度多少轮，封顶防失控
 
 

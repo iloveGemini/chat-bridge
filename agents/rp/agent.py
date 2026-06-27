@@ -238,7 +238,7 @@ class RPChatAgent(BaseAgent):
                     print(f"   > 读取文件: {a.get('filepath')}")
 
             def _execute(fname, a):
-                if fname in tools_registry.CODING_TOOL_NAMES:
+                if fname in tools_registry._REGISTRY:
                     context = {
                         "root_dir": ROOT,
                         "prompts_dir": PROMPTS_DIR,

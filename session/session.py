@@ -29,7 +29,6 @@ class ChatSession:
         self.session_id = session_id
         self.dir = SESSIONS_DIR / session_id
         self.dir.mkdir(parents=True, exist_ok=True)
-        self.messages_file = self.dir / "messages.json"
         self.memory_file = self.dir / "memory.json"
         self.prompts_file = self.dir / "active_prompts.json"
         self.worldbooks_file = self.dir / "worldbooks.json"
@@ -84,14 +83,7 @@ class ChatSession:
             self.current_place = scene_dict["place"]
 
     def load_messages(self):
-        if self.messages_file.exists():
-            try:
-                self.messages = json.loads(
-                    self.messages_file.read_text(encoding="utf-8")
-                )
-            except Exception:
-                self.messages = []
-
+        self.messages = memory_store.get_messages(self.session_id)
     def load_active_prompts(self):
         if self.prompts_file.exists():
             try:
@@ -133,14 +125,7 @@ class ChatSession:
     def save_messages_async(self):
         with self.lock:
             self._ensure_dir()
-            # 💥 已物理超度上古时代的腰斩归档代码，让 messages.json 永久保存全量历史剧本
-            tmp = self.messages_file.with_suffix(".tmp")
-            tmp.write_text(
-                json.dumps(self.messages, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            tmp.replace(self.messages_file)
-
+            memory_store.save_messages(self.session_id, self.messages)
     def read_memory(self):
         if self.memory_file.exists():
             try:

@@ -211,6 +211,24 @@ def init_db(db_path: str) -> None:
         );
         """)
         _conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);")
+
+        # 9. 聊天记录表（messages）
+        _conn.execute("""
+        CREATE TABLE IF NOT EXISTS messages (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          type TEXT,
+          tool_name TEXT,
+          text TEXT,
+          ts REAL,
+          scene_id TEXT,
+          time TEXT,
+          place TEXT,
+          raw_json TEXT
+        );
+        """)
+        _conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);")
         # 一次性迁移：旧世界书条目绑在会话 scope（sess:*）上，新模型改绑世界书。
         # 按产品决策「清空重来」，把残留的会话级 lore 物理清除（只清 sess:*，wb:* 保留）。
         # 注意：此处仍持有 _lock，不能调用会再次加锁的 set_meta/get_meta，直接走 _conn。
@@ -793,7 +811,10 @@ def migrate_scope(
                 f"UPDATE {t} SET scope=?, session_id=? WHERE scope=?",
                 (dst_scope, dst_session_id, src_scope),
             )
+        _conn.execute("UPDATE messages SET session_id=? WHERE session_id=?", (dst_session_id, src_session_id))
         _conn.execute("UPDATE facts SET scope=? WHERE scope=?", (dst_scope, src_scope))
+        _conn.execute("UPDATE memories SET scope=? WHERE scope=?", (dst_scope, src_scope))
+        _conn.execute("UPDATE lore SET scope=? WHERE scope=?", (dst_scope, src_scope))
         _conn.execute(
             "UPDATE summaries SET key=? WHERE key=?",
             (f"arc:{dst_scope}", f"arc:{src_scope}"),
@@ -877,8 +898,50 @@ def set_memory_folder_resident(scope: str, folder: str, is_resident: int) -> boo
         )
         _conn.commit()
         return cur.rowcount > 0
-# ==================== 最终上下文拼装核心 ====================
+# ==================== 聊天记录（messages） ====================
 
+def get_messages(session_id: str) -> list[dict]:
+    """获取指定 session_id 的所有聊天记录"""
+    global _conn
+    if _conn is None:
+        return []
+    with _lock:
+        rows = _conn.execute(
+            "SELECT raw_json FROM messages WHERE session_id = ? ORDER BY id ASC",
+            (session_id,)
+        ).fetchall()
+        return [json.loads(r[0]) for r in rows if r[0]]
+
+def save_messages(session_id: str, messages: list[dict]) -> None:
+    """全量覆盖保存指定 session_id 的聊天记录"""
+    global _conn
+    if _conn is None:
+        return
+    with _lock:
+        _conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+        for msg in messages:
+            _conn.execute(
+                """
+                INSERT INTO messages (
+                    session_id, role, type, tool_name, text, ts, scene_id, time, place, raw_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session_id,
+                    msg.get("role", ""),
+                    msg.get("type", ""),
+                    msg.get("tool_name", ""),
+                    msg.get("text", ""),
+                    msg.get("ts", 0.0),
+                    msg.get("scene_id", ""),
+                    msg.get("time", ""),
+                    msg.get("place", ""),
+                    json.dumps(msg, ensure_ascii=False)
+                )
+            )
+        _conn.commit()
+
+# ==================== 最终上下文拼装核心 ====================
 # §3 记忆段→注入位置映射（可调）。before=贴系统头(常驻)，after=贴尾部(召回)。
 # lore(世界书)按每条 position 字段独立分桶，不在此表。改这里即可调整某段的归属。
 SECTION_POSITION = {

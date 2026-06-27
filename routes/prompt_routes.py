@@ -169,10 +169,8 @@ def _sessions_rename(h, query, session, session_id):
             if s:
                 s.session_id = new_id
                 s.dir = new_dir
-                s.messages_file = new_dir / "messages.json"
                 s.memory_file = new_dir / "memory.json"
                 s.prompts_file = new_dir / "active_prompts.json"
-                sessions_map[new_id] = s
             # 会话改名 → session_id 变了，记忆作用域随之迁移，避免记忆丢失
             memory_store.migrate_scope(
                 f"sess:{old_id}", f"sess:{new_id}", old_id, new_id
@@ -304,15 +302,31 @@ def _get_sessions_list(h, query, session, session_id):
         meta = char_cache[char_name]
 
         preview = ""
+        updated_at = 0
         if s.messages:
             last = s.messages[-1]
-            preview = (
-                "[图片]" if last.get("image") else last.get("text", "")[:30]
-            )
-
-        updated_at = (
-            s.messages_file.stat().st_mtime if s.messages_file.exists() else 0
-        )
+            if isinstance(last, dict):
+                preview = last.get("content", "") or last.get("text", "") or ""
+            else:
+                preview = str(last)
+            try:
+                # 尝试从数据库获取最后一条消息的时间
+                msgs = memory_store.get_messages(d.name)
+                if msgs and msgs[-1].get("ts"):
+                    ts_val = msgs[-1].get("ts")
+                    if isinstance(ts_val, str):
+                        try:
+                            import datetime
+                            mtime = datetime.datetime.fromisoformat(ts_val.replace("Z", "+00:00")).timestamp()
+                        except Exception:
+                            mtime = s.dir.stat().st_mtime
+                    else:
+                        mtime = float(ts_val)
+                else:
+                    mtime = s.dir.stat().st_mtime
+            except Exception:
+                mtime = 0
+            updated_at = mtime
 
         pinned = False
         meta_file = d / "meta.json"
