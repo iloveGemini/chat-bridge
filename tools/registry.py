@@ -43,7 +43,7 @@ ROLE_PERMISSIONS = {
                   "apply_file_edits", "batch_write_files", "replace_in_file"],
     "checker": ["run_terminal_command"], # 测试员只能跑命令
     "rp_character": ["list_lore", "get_prompt"], # RP 角色只能读设定
-    "gm": ["add_lore", "update_lore", "delete_lore"], # GM 可以改设定
+    "gm": ["add_lore", "update_lore", "delete_lore", "add_memory", "get_memories", "rename_memory_folder", "delete_memory_folder", "set_memory_folder_resident"], # GM 可以改设定和记忆
     # 兼容老版本的全量权限
     "legacy_coding": [name for name, meta in _REGISTRY.items() if meta["category"] in ("coding", "common")],
     "legacy_assistant": [name for name, meta in _REGISTRY.items() if meta["category"] in ("rp", "coding", "common")]

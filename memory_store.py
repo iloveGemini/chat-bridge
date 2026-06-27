@@ -198,6 +198,19 @@ def init_db(db_path: str) -> None:
         );
         """)
 
+        # 8. 记忆表（录入记忆）
+        _conn.execute("""
+        CREATE TABLE IF NOT EXISTS memories (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          scope TEXT NOT NULL,
+          folder TEXT,
+          content TEXT NOT NULL,
+          is_resident INTEGER DEFAULT 0,
+          embedding BLOB,
+          created_at TEXT
+        );
+        """)
+        _conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);")
         # 一次性迁移：旧世界书条目绑在会话 scope（sess:*）上，新模型改绑世界书。
         # 按产品决策「清空重来」，把残留的会话级 lore 物理清除（只清 sess:*，wb:* 保留）。
         # 注意：此处仍持有 _lock，不能调用会再次加锁的 set_meta/get_meta，直接走 _conn。
@@ -659,7 +672,7 @@ def list_memories(
     if _conn is None:
         return []
 
-    valid_tables = ["events", "chunks", "facts", "summaries"]
+    valid_tables = ["events", "chunks", "facts", "summaries", "memories"]
     tables = [kind] if kind in valid_tables else valid_tables
     results = []
 
@@ -815,6 +828,55 @@ def delete_scope(scope: str, session_id: str) -> dict:
     return {"ok": True}
 
 
+def add_memory(scope: str, content: str, folder: str = "", is_resident: int = 0) -> int:
+    """添加一条录入记忆"""
+    with _lock:
+        cur = _conn.execute(
+            "INSERT INTO memories (scope, folder, content, is_resident, created_at) VALUES (?, ?, ?, ?, ?)",
+            (scope, folder, content, is_resident, time.strftime("%Y-%m-%d %H:%M:%S"))
+        )
+        _conn.commit()
+        return cur.lastrowid
+
+def get_memories(scope: str) -> list[dict]:
+    """获取指定 scope 下的所有录入记忆"""
+    with _lock:
+        where, params = _scope_in_clause(scope)
+        rows = _conn.execute(f"SELECT * FROM memories WHERE {where} ORDER BY id ASC", params).fetchall()
+        return [_row_to_dict(r) for r in rows]
+
+def rename_memory_folder(scope: str, old_folder: str, new_folder: str) -> bool:
+    """将指定 scope 下 folder 为 old_folder 的所有记录的 folder 更新为 new_folder"""
+    with _lock:
+        where, params = _scope_in_clause(scope)
+        cur = _conn.execute(
+            f"UPDATE memories SET folder = ? WHERE {where} AND folder = ?",
+            (new_folder, *params, old_folder)
+        )
+        _conn.commit()
+        return cur.rowcount > 0
+
+def delete_memory_folder(scope: str, folder: str) -> bool:
+    """删除指定 scope 下 folder 为 folder 的所有记录"""
+    with _lock:
+        where, params = _scope_in_clause(scope)
+        cur = _conn.execute(
+            f"DELETE FROM memories WHERE {where} AND folder = ?",
+            (*params, folder)
+        )
+        _conn.commit()
+        return cur.rowcount > 0
+
+def set_memory_folder_resident(scope: str, folder: str, is_resident: int) -> bool:
+    """将指定 scope 下 folder 为 folder 的所有记录的 is_resident 更新为 is_resident"""
+    with _lock:
+        where, params = _scope_in_clause(scope)
+        cur = _conn.execute(
+            f"UPDATE memories SET is_resident = ? WHERE {where} AND folder = ?",
+            (is_resident, *params, folder)
+        )
+        _conn.commit()
+        return cur.rowcount > 0
 # ==================== 最终上下文拼装核心 ====================
 
 # §3 记忆段→注入位置映射（可调）。before=贴系统头(常驻)，after=贴尾部(召回)。
@@ -825,6 +887,7 @@ SECTION_POSITION = {
     "recent_state": "before",  # 会话近况(当前状态)：常驻
     "episodic_memory_chain": "after",  # 相似回忆：本轮召回
     "original_dialogue": "after",  # 原文细节：本轮召回
+    "normal_memories": "after",  # 录入记忆：本轮召回
 }
 
 
@@ -918,6 +981,25 @@ def build_memory_context(
     if diag is not None:
         diag["facts"] = len(facts)
 
+    # 1.5 录入记忆段
+    memories = get_memories(scope)
+    if memories:
+        resident_mems = [m for m in memories if m.get("is_resident") == 1]
+        normal_mems = [m for m in memories if m.get("is_resident") == 0]
+        
+        if resident_mems and before_out is not None:
+            before_out.append(
+                "<resident_memories>\n"
+                + "\n".join(f"【{m['folder']}】{m['content']}" if m.get("folder") else m['content'] for m in resident_mems)
+                + "\n</resident_memories>"
+            )
+        if normal_mems:
+            _emit_section(
+                "normal_memories",
+                "<memories>\n"
+                + "\n".join(f"【{m['folder']}】{m['content']}" if m.get("folder") else m['content'] for m in normal_mems)
+                + "\n</memories>"
+            )
     # 2. 角色关系摘要
     arc_summary = get_summary(f"arc:{scope}")
     if arc_summary and arc_summary.strip():

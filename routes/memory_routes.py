@@ -46,6 +46,9 @@ def _memory_edit(h, query, session, session_id):
     elif table == "summaries" and data.get("key"):
         memory_store.upsert_summary(data["key"], data.get("text", ""))
         ok = True
+    elif table == "memories":
+        # 简单支持 memories 的更新（如果后续有 update_memory 函数）
+        pass
     h._json({"ok": ok})
 
 
@@ -54,7 +57,7 @@ def _memory_forget(h, query, session, session_id):
     length = int(h.headers.get("Content-Length", 0))
     data = json.loads(_safe_decode(h.rfile.read(length)))
     table, rid = data.get("table"), data.get("id")
-    if table not in ("events", "chunks", "facts", "summaries"):
+    if table not in ("events", "chunks", "facts", "summaries", "memories"):
         h._json({"ok": False, "error": "invalid table"})
     else:
         h._json({"ok": memory_store.forget(table, rid)})

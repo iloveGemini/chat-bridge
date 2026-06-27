@@ -93,7 +93,8 @@ def _confirm(h, query, session, session_id):
     task = agent.get_task(tid)
     if task:
         try:
-            r = agent.git_commit(task["workspace"], "agent: 用户确认完成")
+            title = task.get("title", "用户确认完成")
+            r = agent.git_commit(task["workspace"], f"agent: {title}")
             if r.get("ok") and not r.get("empty") and not r.get("skipped"):
                 agent.add_turn(tid, "system", "text", "📦 已提交最终改动")
         except Exception:

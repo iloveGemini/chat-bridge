@@ -52,9 +52,9 @@ class ChatSession:
         self.interrupted = False
         # 场景闩锁：创世默认，随后从历史末条带戳消息恢复（重启不丢时空）
         self.current_scene_id = GENESIS_SCENE["scene_id"]
+        self.last_scene_id = GENESIS_SCENE["scene_id"]
         self.current_time = GENESIS_SCENE["time"]
         self.current_place = GENESIS_SCENE["place"]
-
         self.load_messages()
         self.load_active_prompts()
         self.load_worldbooks()

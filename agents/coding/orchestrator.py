@@ -13,18 +13,24 @@ Coding Agent 的核心调度器 —— planner 即「项目经理」的动态调
 代码退化成很薄的执行器：调 planner -> 跑它派的活 -> 结果回喂 -> 再调 planner。
 当前为「串行」执行（一次跑一个），并发以后再加。
 """
+
 import json
 
+
 import runtime.coding_runtime as agent
-from agents.coding.state import CodingState
-from agents.coding import phase as _phase  # noqa: F401  (导入即注册各相位叶子)
 from agents.base import AgentContext, AgentResult, get_agent
+from agents.coding import phase as _phase  # noqa: F401  (导入即注册各相位叶子)
+from agents.coding.state import CodingState
 from agents.manager import BaseManager
 from tools.registry import _REGISTRY
-from tools.coding import add_workspace_file, remove_workspace_file
+
 # 可被项目经理调度的子 agent，及其逻辑端点 / 工具轮数上限
 DISPATCHABLE = ("searcher", "developer", "checker")
-WORKER_ENDPOINT = {"searcher": "worker_api", "developer": "api", "checker": "api"}
+WORKER_ENDPOINT = {
+    "searcher": "worker_api",
+    "developer": "api",
+    "checker": "worker_api",
+}
 WORKER_MAX_ROUNDS = {"searcher": 14, "developer": 12, "checker": 8}
 MAX_MANAGER_ROUNDS = 16  # 项目经理最多调度多少轮，封顶防失控
 
@@ -90,7 +96,10 @@ def _commit_tool():
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "message": {"type": "string", "description": "这次提交说明(一句话，描述该功能块的改动)"}
+                    "message": {
+                        "type": "string",
+                        "description": "这次提交说明(一句话，描述该功能块的改动)",
+                    }
                 },
                 "required": ["message"],
             },
@@ -105,11 +114,15 @@ def _manager_tools(commit_enabled=False):
     clar = _REGISTRY.get("ask_user_clarification")
     if clar:
         tools.append(clar["schema"])
-    
+
     # 允许 Manager 主动管理文件上下文
-    tools.append(add_workspace_file.TOOL_SCHEMA)
-    tools.append(remove_workspace_file.TOOL_SCHEMA)
-    
+    add_ws = _REGISTRY.get("add_workspace_file")
+    if add_ws:
+        tools.append(add_ws["schema"])
+    rm_ws = _REGISTRY.get("remove_workspace_file")
+    if rm_ws:
+        tools.append(rm_ws["schema"])
+
     return tools
 
 
@@ -131,7 +144,9 @@ class CodingOrchestrator(BaseManager):
 
         def _fn(messages, tools):
             try:
-                agent.set_last_prompt(self.task_id, messages, phase=self.state.get("phase"))
+                agent.set_last_prompt(
+                    self.task_id, messages, phase=self.state.get("phase")
+                )
             except Exception:
                 pass
             if custom:
@@ -156,14 +171,22 @@ class CodingOrchestrator(BaseManager):
     def _ask_before_acting(self):
         """全局模式开关：开启时，派 developer 动文件前先暂停让用户批准。"""
         try:
-            return bool((agent.load_config().get("coding", {}) or {}).get("ask_before_acting", False))
+            return bool(
+                (agent.load_config().get("coding", {}) or {}).get(
+                    "ask_before_acting", False
+                )
+            )
         except Exception:
             return False
 
     def _commit_per_block(self):
         """全局开关：授权经理在大改动里按功能块分次 git 提交。"""
         try:
-            return bool((agent.load_config().get("coding", {}) or {}).get("commit_per_block", False))
+            return bool(
+                (agent.load_config().get("coding", {}) or {}).get(
+                    "commit_per_block", False
+                )
+            )
         except Exception:
             return False
 
@@ -173,9 +196,16 @@ class CodingOrchestrator(BaseManager):
             turns = agent.get_turns(self.task_id) or []
         except Exception:
             turns = []
-        texts = [t for t in turns
-                 if t.get("type") == "text" and t.get("role") in ("user", "assistant")]
-        if texts and texts[-1].get("role") == "user" and (texts[-1].get("content") or "").strip() == (user_msg or "").strip():
+        texts = [
+            t
+            for t in turns
+            if t.get("type") == "text" and t.get("role") in ("user", "assistant")
+        ]
+        if (
+            texts
+            and texts[-1].get("role") == "user"
+            and (texts[-1].get("content") or "").strip() == (user_msg or "").strip()
+        ):
             texts = texts[:-1]
         if not texts:
             return ""
@@ -190,7 +220,11 @@ class CodingOrchestrator(BaseManager):
 
     # ---------------- 子 agent 执行（串行） ----------------
     def _worker_handoff(self, agent_name, instruction, progress_text):
-        req = (self.state.get("user_request", "") or (self.task or {}).get("goal", "") or "").strip()
+        req = (
+            self.state.get("user_request", "")
+            or (self.task or {}).get("goal", "")
+            or ""
+        ).strip()
         head = f"【总目标】\n{req}\n\n【你这次的任务】\n{instruction}"
         if agent_name in ("developer", "checker") and progress_text:
             head += (
@@ -215,7 +249,8 @@ class CodingOrchestrator(BaseManager):
         if not leaf:
             return {"text": f"(未知 agent: {agent_name})", "cancelled": False}
         ctx = AgentContext(
-            task_id=self.task_id, on_event=self._on_event,
+            task_id=self.task_id,
+            on_event=self._on_event,
             shared={
                 "chat_fn": self._chat_for(WORKER_ENDPOINT.get(agent_name, "api")),
                 "tool_ctx": self.ctx,
@@ -279,7 +314,11 @@ class CodingOrchestrator(BaseManager):
             await_plan_approval = False
 
             # 经理上下文：原始需求 + 前情提要
-            req = (self.state.get("user_request", "") or (self.task or {}).get("goal", "") or "(沿用既有任务目标)")
+            req = (
+                self.state.get("user_request", "")
+                or (self.task or {}).get("goal", "")
+                or "(沿用既有任务目标)"
+            )
             latest_reply = self.state.get("latest_user_reply", "")
             if latest_reply and latest_reply != req:
                 req += f"\n\n【用户最新回复】\n{latest_reply}"
@@ -332,10 +371,13 @@ class CodingOrchestrator(BaseManager):
                     break
                 injected = agent._drain_queue(self.task_id)
                 if injected:
-                    messages.append({
-                        "role": "user",
-                        "content": "【用户追加/修改需求，请纳入考虑】\n" + "\n".join(injected),
-                    })
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": "【用户追加/修改需求，请纳入考虑】\n"
+                            + "\n".join(injected),
+                        }
+                    )
 
                 res = manager_chat(messages, tools)
                 choice = (res.get("choices") or [{}])[0].get("message", {}) or {}
@@ -343,7 +385,9 @@ class CodingOrchestrator(BaseManager):
                 tcs = choice.get("tool_calls") or []
 
                 if content:
-                    agent.add_turn(self.task_id, "assistant", "text", f"[planner] {content}")
+                    agent.add_turn(
+                        self.task_id, "assistant", "text", f"[planner] {content}"
+                    )
                     self._emit("assistant", f"[planner] {content}")
                     _jadd(f"经理：{content[:600]}")
 
@@ -353,7 +397,13 @@ class CodingOrchestrator(BaseManager):
                     final_text = content or "（需要你的进一步指示。）"
                     break
 
-                messages.append({"role": "assistant", "content": choice.get("content") or "", "tool_calls": tcs})
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": choice.get("content") or "",
+                        "tool_calls": tcs,
+                    }
+                )
 
                 stop = False
                 for tc in tcs:
@@ -365,8 +415,13 @@ class CodingOrchestrator(BaseManager):
                         args = {}
 
                     if name == "ask_user_clarification":
-                        agent.add_turn(self.task_id, "assistant", "clarification_card",
-                                       json.dumps(args, ensure_ascii=False), tool_name=name)
+                        agent.add_turn(
+                            self.task_id,
+                            "assistant",
+                            "clarification_card",
+                            json.dumps(args, ensure_ascii=False),
+                            tool_name=name,
+                        )
                         self._emit("clarification", args)
                         waiting_user = True
                         final_text = "（已推送需求确认卡，等待你的选择/补充。）"
@@ -375,7 +430,9 @@ class CodingOrchestrator(BaseManager):
 
                     if name == "finish":
                         await_confirm = True
-                        final_text = (args.get("summary") or "").strip() or "改动已完成，待你确认。"
+                        final_text = (
+                            args.get("summary") or ""
+                        ).strip() or "改动已完成，待你确认。"
                         stop = True
                         break
 
@@ -383,10 +440,20 @@ class CodingOrchestrator(BaseManager):
                         msg = (args.get("message") or "").strip() or "WIP"
                         r = agent.git_commit(self.task["workspace"], f"agent: {msg}")
                         tip = r.get("msg", "")
-                        agent.add_turn(self.task_id, "system", "text", f"📦 提交：{msg}" + (f"（{tip}）" if tip else ""))
+                        agent.add_turn(
+                            self.task_id,
+                            "system",
+                            "text",
+                            f"📦 提交：{msg}" + (f"（{tip}）" if tip else ""),
+                        )
                         _jadd(f"已 git 提交：{msg}")
-                        messages.append({"role": "tool", "tool_call_id": tc.get("id"),
-                                         "content": json.dumps(r, ensure_ascii=False)})
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc.get("id"),
+                                "content": json.dumps(r, ensure_ascii=False),
+                            }
+                        )
                         continue
 
                     if name == "dispatch":
@@ -395,25 +462,45 @@ class CodingOrchestrator(BaseManager):
                         # 经理的旁白：把它派单的理由讲出来（模型调工具时 content 常为空，靠这个补上）
                         reason = (args.get("reason") or "").strip()
                         if reason:
-                            agent.add_turn(self.task_id, "assistant", "text", f"[planner] {reason}")
+                            agent.add_turn(
+                                self.task_id, "assistant", "text", f"[planner] {reason}"
+                            )
                             self._emit("assistant", f"[planner] {reason}")
                             _jadd(f"经理：{reason[:400]}")
                         if agent_name not in DISPATCHABLE:
-                            messages.append({"role": "tool", "tool_call_id": tc.get("id"),
-                                             "content": f"未知 agent：{agent_name}，可选 {list(DISPATCHABLE)}"})
+                            messages.append(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tc.get("id"),
+                                    "content": f"未知 agent：{agent_name}，可选 {list(DISPATCHABLE)}",
+                                }
+                            )
                             continue
                         # Ask Before Acting：派 developer 动文件前先等批准
                         # 如果用户发了文字回复(user_msg)，放行让 planner 看到并重新规划，不再死板拦截
-                        if agent_name == "developer" and self._ask_before_acting() and not approved and not user_msg:
+                        if (
+                            agent_name == "developer"
+                            and self._ask_before_acting()
+                            and not approved
+                            and not user_msg
+                        ):
                             await_plan_approval = True
-                            final_text = ((content + "\n\n") if content else "") + \
-                                f"即将派 developer 执行：\n{instruction}"
+                            final_text = (
+                                (content + "\n\n") if content else ""
+                            ) + f"即将派 developer 执行：\n{instruction}"
                             stop = True
                             break
 
-                        agent.add_turn(self.task_id, "system", "text",
-                                       f"🧭 派单 → {agent_name}：{instruction[:160]}")
-                        self._emit("dispatch", {"agent": agent_name, "instruction": instruction})
+                        agent.add_turn(
+                            self.task_id,
+                            "system",
+                            "text",
+                            f"🧭 派单 → {agent_name}：{instruction[:160]}",
+                        )
+                        self._emit(
+                            "dispatch",
+                            {"agent": agent_name, "instruction": instruction},
+                        )
                         _jadd(f"派 {agent_name}：{instruction[:300]}")
                         wr = self._run_worker(agent_name, instruction, _jtext(9000))
                         if wr.get("cancelled"):
@@ -422,22 +509,36 @@ class CodingOrchestrator(BaseManager):
                             break
                         result_text = wr.get("text", "") or "(无输出)"
                         _jadd(f"{agent_name} 结果：{result_text[:8000]}")
-                        messages.append({"role": "tool", "tool_call_id": tc.get("id"),
-                                         "content": result_text[:8000]})
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc.get("id"),
+                                "content": result_text[:8000],
+                            }
+                        )
                         continue
 
                     # 未知工具
-                    messages.append({"role": "tool", "tool_call_id": tc.get("id"),
-                                     "content": f"未知工具：{name}"})
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc.get("id"),
+                            "content": f"未知工具：{name}",
+                        }
+                    )
 
                 if stop:
                     break
             else:
                 # 用满轮数仍没 finish
-                final_text = final_text or "（已达最大调度轮数，暂停，请查看进度并指示下一步。）"
+                final_text = (
+                    final_text or "（已达最大调度轮数，暂停，请查看进度并指示下一步。）"
+                )
 
             if interrupted:
-                final_text = final_text or "（已被用户中断，已保存当前进度，可继续指示。）"
+                final_text = (
+                    final_text or "（已被用户中断，已保存当前进度，可继续指示。）"
+                )
                 agent.add_turn(self.task_id, "system", "text", "⏹️ 任务已被用户中断")
 
             if final_text:
@@ -445,13 +546,21 @@ class CodingOrchestrator(BaseManager):
                 self._emit("assistant", final_text)
 
             if await_confirm:
-                agent.add_turn(self.task_id, "assistant", "confirm_card",
-                               json.dumps({"summary": final_text}, ensure_ascii=False))
+                agent.add_turn(
+                    self.task_id,
+                    "assistant",
+                    "confirm_card",
+                    json.dumps({"summary": final_text}, ensure_ascii=False),
+                )
                 self._emit("await_confirm", {"summary": final_text})
 
             if await_plan_approval:
-                agent.add_turn(self.task_id, "assistant", "plan_card",
-                               json.dumps({"plan": final_text}, ensure_ascii=False))
+                agent.add_turn(
+                    self.task_id,
+                    "assistant",
+                    "plan_card",
+                    json.dumps({"plan": final_text}, ensure_ascii=False),
+                )
                 self._emit("await_plan", {"plan": final_text})
 
             card = {}
@@ -462,21 +571,54 @@ class CodingOrchestrator(BaseManager):
                 pass
 
             status = (
-                "已挂起" if interrupted
-                else ("待批准" if await_plan_approval
-                      else ("待确认" if await_confirm
-                            else ("等待输入" if waiting_user else ("已完成" if done else "等待输入"))))
+                "已挂起"
+                if interrupted
+                else (
+                    "待批准"
+                    if await_plan_approval
+                    else (
+                        "待确认"
+                        if await_confirm
+                        else (
+                            "等待输入"
+                            if waiting_user
+                            else ("已完成" if done else "等待输入")
+                        )
+                    )
+                )
             )
             self.state.set(
                 "status",
-                "failed" if interrupted
-                else ("awaiting_plan" if await_plan_approval
-                      else ("awaiting_confirm" if await_confirm
-                            else ("waiting_user" if waiting_user else ("done" if done else "idle")))),
+                "failed"
+                if interrupted
+                else (
+                    "awaiting_plan"
+                    if await_plan_approval
+                    else (
+                        "awaiting_confirm"
+                        if await_confirm
+                        else (
+                            "waiting_user"
+                            if waiting_user
+                            else ("done" if done else "idle")
+                        )
+                    )
+                ),
             )
             agent.update_task(
-                self.task_id, status=status,
-                progress=100 if done else (95 if await_confirm else (30 if await_plan_approval else int((card or {}).get("progress", 10) or 10))),
+                self.task_id,
+                status=status,
+                progress=100
+                if done
+                else (
+                    95
+                    if await_confirm
+                    else (
+                        30
+                        if await_plan_approval
+                        else int((card or {}).get("progress", 10) or 10)
+                    )
+                ),
             )
             return {
                 "final_text": final_text,
@@ -491,8 +633,12 @@ class CodingOrchestrator(BaseManager):
         except Exception as e:
             agent._log("Orchestrator 回合出错:", e)
             try:
-                agent.add_turn(self.task_id, "system", "text",
-                               f"⚠️ 系统错误：{e}（已停在此处，可直接再发消息续跑）")
+                agent.add_turn(
+                    self.task_id,
+                    "system",
+                    "text",
+                    f"⚠️ 系统错误：{e}（已停在此处，可直接再发消息续跑）",
+                )
             except Exception:
                 pass
             try:
@@ -501,9 +647,13 @@ class CodingOrchestrator(BaseManager):
             except Exception:
                 pass
             return {
-                "final_text": f"系统错误：{e}", "phase": self.state.get("phase"),
-                "done": False, "waiting_user": False,
-                "await_confirm": False, "interrupted": True, "checkpoint": {},
+                "final_text": f"系统错误：{e}",
+                "phase": self.state.get("phase"),
+                "done": False,
+                "waiting_user": False,
+                "await_confirm": False,
+                "interrupted": True,
+                "checkpoint": {},
             }
         finally:
             agent._running[self.task_id] = False

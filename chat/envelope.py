@@ -57,6 +57,8 @@ def ingest_reply(session, raw_reply):
     if scene:
         with session.lock:
             if scene.get("scene_id"):
+                if session.current_scene_id != scene["scene_id"]:
+                    session.last_scene_id = session.current_scene_id
                 session.current_scene_id = scene["scene_id"]
             if scene.get("time"):
                 session.current_time = scene["time"]
