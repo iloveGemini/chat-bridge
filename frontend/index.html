@@ -97,6 +97,42 @@
               </div>
               <div style="color: var(--text-secondary); font-size: 20px">›</div>
             </div>
+
+            <div
+              class="list-item"
+              style="border-radius: 8px; margin-bottom: 10px"
+              onclick="
+                import('./js/views/codeAgentHubView.js').then((m) =>
+                  m.codeAgentHubView.open('devteam'),
+                )
+              "
+            >
+              <div
+                class="avatar"
+                style="background: #1e1e1e; border: 1px solid #333"
+              >
+                <svg
+                  viewBox="0 0 24 24"
+                  width="24"
+                  height="24"
+                  stroke="#e0a458"
+                  stroke-width="2"
+                  fill="none"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                  <circle cx="9" cy="7" r="4"></circle>
+                  <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                  <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                </svg>
+              </div>
+              <div class="info">
+                <div class="name" style="font-weight: bold">项目开发组 · DevTeam</div>
+                <div class="msg">专门开发本项目的多角色团队（@角色 可手动指派）</div>
+              </div>
+              <div style="color: var(--text-secondary); font-size: 20px">›</div>
+            </div>
           </div>
         </div>
 
@@ -928,6 +964,16 @@
 
         <!-- 4. 命令行输入 -->
         <div class="workspace-input-area">
+          <!-- DevTeam @角色选择条（仅 devteam 任务显示） -->
+          <div
+            id="ca-mention-bar"
+            style="
+              display: none;
+              flex-wrap: wrap;
+              gap: 6px;
+              padding: 6px 8px 2px;
+            "
+          ></div>
           <div class="cli-input-wrapper">
             <!-- 本地文件选取按钮 -->
             <svg

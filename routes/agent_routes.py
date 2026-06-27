@@ -4,8 +4,9 @@ import threading
 from pathlib import Path
 
 import runtime.coding_runtime as agent
+import runtime.devteam_store as dstore
 from core.config import config, config_lock, save_config as _save_config
-from agents.manager import run_coding
+from agents.manager import run_coding, run_devteam
 from routes.registry import post, get
 from agents.coding.state import CodingState
 try:
@@ -23,6 +24,7 @@ def _create(h, query, session, session_id):
         data.get("goal") or "",
         seed_dir=data.get("seed_dir") or None,
         work_dir=data.get("work_dir") or None,
+        agent_group=data.get("agent_group") or "coding",
     )
     h._json({"ok": True, "task": task})
 
@@ -37,6 +39,14 @@ def _send(h, query, session, session_id):
         return
     if agent.is_running(task_id):
         h._json({"ok": False, "error": "该任务正在运行中"})
+        return
+    # 先按任务所属组分流：devteam → 专属多角色团队；否则走通用 coding。
+    _task = agent.get_task(task_id)
+    _group = (_task or {}).get("agent_group") or "coding"
+    if _group == "devteam":
+        print(f"[agent/send] task={task_id} 路由 -> devteam")
+        threading.Thread(target=run_devteam, args=(task_id, text), daemon=True).start()
+        h._json({"ok": True, "mode": "devteam"})
         return
     # 网关路由：默认走新的 5 阶段 Orchestrator；config.coding.orchestrator=false 可回退旧大循环。
     with config_lock:
@@ -109,28 +119,40 @@ def _confirm(h, query, session, session_id):
 
 @get("/api/agent/mode")
 def _get_mode(h, query, session, session_id):
+    group = query.get("group", ["coding"])[0] or "coding"
     with config_lock:
-        c = config.get("coding", {}) or {}
-        v = bool(c.get("ask_before_acting", False))
-        cpb = bool(c.get("commit_per_block", False))
-    h._json({"ok": True, "ask_before_acting": v, "commit_per_block": cpb})
+        if group == "devteam":
+            c = config.get("devteam", {}) or {}
+            out = {"confirm_checkpoints": bool(c.get("confirm_checkpoints", True))}
+        else:
+            c = config.get("coding", {}) or {}
+            out = {"ask_before_acting": bool(c.get("ask_before_acting", False)),
+                   "commit_per_block": bool(c.get("commit_per_block", False))}
+    h._json({"ok": True, "group": group, **out})
 
 
 @post("/api/agent/mode")
 def _set_mode(h, query, session, session_id):
-    """切换全局开关：ask_before_acting(计划先批准) / commit_per_block(授权分块提交)。
-    只更新本次传来的键。"""
+    """切换开关，按组：coding=ask_before_acting/commit_per_block；
+    devteam=confirm_checkpoints（逐检查点确认）。只更新本次传来的键。"""
     data = h._read_json()
+    group = data.get("group") or "coding"
     with config_lock:
-        c = config.setdefault("coding", {})
-        if "ask_before_acting" in data:
-            c["ask_before_acting"] = bool(data.get("ask_before_acting"))
-        if "commit_per_block" in data:
-            c["commit_per_block"] = bool(data.get("commit_per_block"))
-        out = {"ask_before_acting": bool(c.get("ask_before_acting", False)),
-               "commit_per_block": bool(c.get("commit_per_block", False))}
+        if group == "devteam":
+            c = config.setdefault("devteam", {})
+            if "confirm_checkpoints" in data:
+                c["confirm_checkpoints"] = bool(data.get("confirm_checkpoints"))
+            out = {"confirm_checkpoints": bool(c.get("confirm_checkpoints", True))}
+        else:
+            c = config.setdefault("coding", {})
+            if "ask_before_acting" in data:
+                c["ask_before_acting"] = bool(data.get("ask_before_acting"))
+            if "commit_per_block" in data:
+                c["commit_per_block"] = bool(data.get("commit_per_block"))
+            out = {"ask_before_acting": bool(c.get("ask_before_acting", False)),
+                   "commit_per_block": bool(c.get("commit_per_block", False))}
     _save_config()
-    h._json({"ok": True, **out})
+    h._json({"ok": True, "group": group, **out})
 
 
 @post("/api/agent/approve_plan")
@@ -147,6 +169,13 @@ def _approve_plan(h, query, session, session_id):
     task = agent.get_task(tid)
     if not task:
         h._json({"ok": False, "error": "任务不存在"})
+        return
+    if (task.get("agent_group") or "coding") == "devteam":
+        # DevTeam：批准当前挂起的状态确认门 → 续跑（应用该次状态变更）
+        dstore.set_kv(tid, "gate_approved", True)
+        agent.add_turn(tid, "system", "text", "▶️ 已批准状态变更，继续")
+        threading.Thread(target=run_devteam, args=(tid, ""), daemon=True).start()
+        h._json({"ok": True})
         return
     from agents.coding.state import CodingState
     CodingState(task["workspace"]).set("plan_approved", True)  # 批准 → 经理这轮派 developer 不再暂停

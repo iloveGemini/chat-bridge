@@ -59,6 +59,8 @@ def load_config():
             },
         )
         config.setdefault("summary_api", {"base_url": "", "api_key": "", "model": ""})
+        # DevTeam（专门开发本项目的多角色团队）：逐检查点确认开关，默认开。
+        config.setdefault("devteam", {"confirm_checkpoints": True})
         config.setdefault(
             "memory",
             {

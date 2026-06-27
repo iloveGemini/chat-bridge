@@ -232,6 +232,11 @@ def init_db():
         con.execute("ALTER TABLE tasks ADD COLUMN confirmed INTEGER DEFAULT 0")
     except Exception:
         pass  # 列已存在
+    try:
+        # agent_group：区分通用 coding 组 与 专门开发本项目的 devteam 组（默认 coding）
+        con.execute("ALTER TABLE tasks ADD COLUMN agent_group TEXT DEFAULT 'coding'")
+    except Exception:
+        pass  # 列已存在
     con.commit()
     con.close()
 
@@ -243,7 +248,7 @@ def _conn():
 
 
 # ---- tasks ----------------------------------------------------------------
-def create_task(title, goal="", seed_dir=None, work_dir=None):
+def create_task(title, goal="", seed_dir=None, work_dir=None, agent_group="coding"):
     tid = "task_" + str(int(time.time() * 1000))
     if work_dir and Path(work_dir).is_dir():
         # 直接在原目录工作：不拷贝，agent 改的就是原文件（请自行备份/用 git）
@@ -280,9 +285,9 @@ def create_task(title, goal="", seed_dir=None, work_dir=None):
                 _log(f"seed_dir 不存在或非目录，跳过: {seed_dir}")
     with _db_lock, _conn() as con:
         con.execute(
-            "INSERT INTO tasks(id,title,goal,status,progress,workspace,created_at,updated_at)"
-            " VALUES(?,?,?,?,?,?,?,?)",
-            (tid, title, goal or title, "就绪", 0, str(ws), _now(), _now()),
+            "INSERT INTO tasks(id,title,goal,status,progress,workspace,created_at,updated_at,agent_group)"
+            " VALUES(?,?,?,?,?,?,?,?,?)",
+            (tid, title, goal or title, "就绪", 0, str(ws), _now(), _now(), agent_group or "coding"),
         )
     _log(f"新建任务 {tid} 工作区={ws}")
     return get_task(tid)
@@ -315,6 +320,11 @@ def delete_task(task_id):
         con.execute("DELETE FROM turns WHERE task_id=?", (task_id,))
         con.execute("DELETE FROM checkpoints WHERE task_id=?", (task_id,))
         con.execute("DELETE FROM context_cache WHERE task_id=?", (task_id,))
+    try:
+        import runtime.devteam_store as _dstore  # 延迟导入避免循环
+        _dstore.delete_all(task_id)
+    except Exception:
+        pass
 
 
 # ---- turns（完整事件流，供前端回放） --------------------------------------

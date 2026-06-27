@@ -22,6 +22,7 @@ class CodeAgentView {
     this.workspaceTree = "";
     this.pinnedContext = [];
     this._nearBottom = true; // 用户是否贴在底部：决定新内容来时要不要自动滚屏
+    this.group = "coding"; // 'coding'=通用；'devteam'=本项目开发组
   }
 
   els() {
@@ -245,9 +246,12 @@ class CodeAgentView {
     });
   }
 
-  async open(taskId = "default", taskTitle = "Code Agent") {
+  async open(taskId = "default", taskTitle = "Code Agent", group = "coding") {
+    this.group = group || "coding";
     window.router.pushView("code-agent-view");
     this.bindOnce();
+    this._renderMentionBar();
+    this.loadMode(); // 每次进入按当前组刷新模式按钮（首次 bindOnce 也会调，这里覆盖切组场景）
 
     if (this.currentTaskId !== taskId) {
       this.currentTaskId = taskId;
@@ -841,14 +845,20 @@ class CodeAgentView {
   }
 
   // 执行模式（全局）：Act Without Asking ⚡ / Ask Before Acting 🛑
+  // devteam：逐检查点确认 🛑 / 全自动 ⚡
   async loadMode() {
     try {
-      const r = await api.agentMode();
-      this._askBefore = !!(r && r.ask_before_acting);
-      this._commitBlock = !!(r && r.commit_per_block);
+      const r = await api.agentMode(this.group === "devteam" ? "devteam" : undefined);
+      if (this.group === "devteam") {
+        this._confirmCheckpoints = !!(r && r.confirm_checkpoints);
+      } else {
+        this._askBefore = !!(r && r.ask_before_acting);
+        this._commitBlock = !!(r && r.commit_per_block);
+      }
     } catch (e) {
       this._askBefore = false;
       this._commitBlock = false;
+      this._confirmCheckpoints = true;
     }
     this._renderModeBtn();
     this._renderCommitBtn();
@@ -856,6 +866,12 @@ class CodeAgentView {
 
   _renderCommitBtn() {
     if (!this.commitBtn) return;
+    // devteam 没有「分块提交」开关，隐藏它
+    if (this.group === "devteam") {
+      this.commitBtn.style.display = "none";
+      return;
+    }
+    this.commitBtn.style.display = "";
     if (this._commitBlock) {
       this.commitBtn.textContent = "📦 分块提交";
       this.commitBtn.style.color = "#4ec9b0";
@@ -887,6 +903,20 @@ class CodeAgentView {
 
   _renderModeBtn() {
     if (!this.modeBtn) return;
+    if (this.group === "devteam") {
+      if (this._confirmCheckpoints) {
+        this.modeBtn.textContent = "🛑 逐步确认";
+        this.modeBtn.style.color = "#e0c14e";
+        this.modeBtn.style.borderColor = "#6b5e2e";
+        this.modeBtn.title = "命中检查点（阶段推进 / 架构定稿 / 发布）时先等你确认";
+      } else {
+        this.modeBtn.textContent = "⚡ 全自动";
+        this.modeBtn.style.color = "#4ec9b0";
+        this.modeBtn.style.borderColor = "#2e6b4f";
+        this.modeBtn.title = "全自动：状态变更不再逐个确认（结尾仍会让你确认交付）";
+      }
+      return;
+    }
     if (this._askBefore) {
       this.modeBtn.textContent = "🛑 先批准";
       this.modeBtn.style.color = "#e0c14e";
@@ -901,6 +931,22 @@ class CodeAgentView {
   }
 
   async toggleMode() {
+    if (this.group === "devteam") {
+      const next = !this._confirmCheckpoints;
+      try {
+        const r = await api.agentSetMode({ group: "devteam", confirm_checkpoints: next });
+        if (r && r.ok) {
+          this._confirmCheckpoints = !!r.confirm_checkpoints;
+          this._renderModeBtn();
+          showToast(this._confirmCheckpoints ? "已切到：逐检查点确认" : "已切到：全自动");
+        } else {
+          showToast("切换失败");
+        }
+      } catch (e) {
+        showToast("切换失败");
+      }
+      return;
+    }
     const next = !this._askBefore;
     try {
       const r = await api.agentSetMode({ ask_before_acting: next });
@@ -913,6 +959,46 @@ class CodeAgentView {
       }
     } catch (e) {
       showToast("切换失败");
+    }
+  }
+
+  // DevTeam @角色选择条：点击把 @handle 写进输入框（后端 parse_mention 真正解析）
+  _renderMentionBar() {
+    const bar = document.getElementById("ca-mention-bar");
+    if (!bar) return;
+    if (this.group !== "devteam") {
+      bar.style.display = "none";
+      return;
+    }
+    const ROLES = [
+      ["@manager", "Manager"],
+      ["@architect", "Architect"],
+      ["@designer", "Designer"],
+      ["@context", "Context"],
+      ["@programmer", "Programmer"],
+      ["@checker-tech", "Checker-Tech"],
+      ["@checker-design", "Checker-Design"],
+      ["@auto", "Auto"],
+    ];
+    bar.style.display = "flex";
+    bar.innerHTML = ROLES.map(
+      ([h, label]) =>
+        `<span class="ca-mention-chip" data-h="${h}" style="cursor:pointer;font-size:11px;color:#9cdcfe;border:1px solid #38506b;border-radius:10px;padding:1px 8px;background:#1c2733;">${label}</span>`,
+    ).join("");
+    if (!bar._bound) {
+      bar._bound = true;
+      bar.addEventListener("click", (ev) => {
+        const chip = ev.target.closest(".ca-mention-chip");
+        if (!chip) return;
+        const e = this.els();
+        const handle = chip.dataset.h + " ";
+        // @角色一律放最前面（后端只认开头的 @）
+        const rest = (e.input.value || "").replace(/^\s*@[\w\-]+\s*/, "");
+        e.input.value = handle + rest;
+        e.input.focus();
+        e.input.style.height = "auto";
+        e.input.style.height = Math.min(e.input.scrollHeight, 120) + "px";
+      });
     }
   }
 

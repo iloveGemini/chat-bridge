@@ -26,6 +26,7 @@ from agents.base import (
 # import 适配器触发注册
 from agents.coding.agent import CodingAgent  # noqa: F401
 from agents.rp.agent import RPChatAgent      # noqa: F401
+from agents.devteam.agent import DevTeamAgent  # noqa: F401
 
 
 class BaseManager(BaseAgent):
@@ -93,4 +94,11 @@ def run_coding(task_id, user_msg, on_event=None):
     """Coding 入口：经 Manager 路由到 coding 组合节点（= 5 阶段 orchestrator）。"""
     return MANAGER.dispatch(
         AgentContext(agent_type="coding", task_id=task_id, user_msg=user_msg, on_event=on_event)
+    )
+
+
+def run_devteam(task_id, user_msg, on_event=None):
+    """DevTeam 入口：专门开发本项目的多角色团队（与通用 coding 组并存）。"""
+    return MANAGER.dispatch(
+        AgentContext(agent_type="devteam", task_id=task_id, user_msg=user_msg, on_event=on_event)
     )

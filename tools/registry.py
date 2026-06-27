@@ -42,6 +42,23 @@ ROLE_PERMISSIONS = {
                   "get_function_code", "smart_file_insight",
                   "apply_file_edits", "batch_write_files", "replace_in_file"],
     "checker": ["run_terminal_command", "run_playwright_script"], # 测试员只能跑命令和执行网页脚本
+    # ===== DevTeam（专门开发本项目的多角色团队，与通用 coding 组并存）=====
+    # 注：各角色的 submit_state / save_context 等「状态写入」工具不在此表——它们是
+    # phase.run_role 注入、由 orchestrator 路由到 State Store 的合成工具，与文件工具正交。
+    "manager": [],  # Manager 的 dispatch/advance_phase/finish 由 orchestrator 直接构造
+    "architect": ["read_file_with_lines", "grep_files", "glob_files", "get_outline",
+                  "get_function_code", "smart_file_insight"],
+    "designer": ["read_file_with_lines", "grep_files", "glob_files", "get_outline",
+                 "get_function_code", "smart_file_insight"],
+    "context_engineer": ["read_file_with_lines", "grep_files", "glob_files", "get_outline",
+                         "get_function_code", "smart_file_insight"],
+    "programmer": ["read_file_with_lines", "grep_files", "glob_files", "get_outline",
+                   "get_function_code", "smart_file_insight",
+                   "apply_file_edits", "batch_write_files", "replace_in_file"],
+    "checker_tech": ["run_terminal_command", "run_playwright_script",
+                     "read_file_with_lines", "grep_files", "glob_files", "get_outline"],
+    "checker_design": ["read_file_with_lines", "grep_files", "glob_files", "get_outline",
+                       "get_function_code", "smart_file_insight"],
     "rp_character": ["list_lore", "get_prompt"], # RP 角色只能读设定
     "gm": ["add_lore", "update_lore", "delete_lore", "add_memory", "get_memories", "rename_memory_folder", "delete_memory_folder", "set_memory_folder_resident"], # GM 可以改设定和记忆
     # 兼容老版本的全量权限

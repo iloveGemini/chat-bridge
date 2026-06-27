@@ -28,7 +28,7 @@ DISPATCHABLE = ("searcher", "developer", "checker")
 WORKER_ENDPOINT = {
     "searcher": "worker_api",
     "developer": "api",
-    "checker": "api",
+    "checker": "worker_api",
 }
 WORKER_MAX_ROUNDS = {"searcher": 20, "developer": 20, "checker": 20}
 MAX_MANAGER_ROUNDS = 16  # 项目经理最多调度多少轮，封顶防失控
@@ -238,6 +238,7 @@ class CodingOrchestrator(BaseManager):
         if agent_name == "checker":
             head += (
                 "\n\n请运行验证（优先 pytest / 项目测试，其次 node -c / 最小运行）。"
+                "如果需要测试网页交互，可以使用 run_playwright_script 工具编写并执行自动化测试脚本。"
                 "全部通过在结尾单独输出 [CHECK_PASS]；失败输出 [CHECK_FAIL] 并附关键报错。"
             )
         return head

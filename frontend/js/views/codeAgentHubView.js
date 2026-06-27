@@ -10,6 +10,7 @@ class CodeAgentHubView {
     this._bound = false;
     this.tasks = [];
     this.activeSwipeEl = null;
+    this.group = "coding"; // 'coding'=通用 Code Agent；'devteam'=本项目开发组
   }
 
   els() {
@@ -27,6 +28,7 @@ class CodeAgentHubView {
       title: t.title,
       status: t.status,
       progress: t.progress || 0,
+      agentGroup: t.agent_group || "coding",
       updatedAt: t.updated_at || t.created_at || new Date().toISOString(),
     };
   }
@@ -36,6 +38,7 @@ class CodeAgentHubView {
       const res = await api.agentTasks();
       this.tasks = (res && res.ok ? res.tasks : [])
         .filter((t) => t.status !== "已归档")
+        .filter((t) => (t.agent_group || "coding") === this.group)
         .map((t) => this._map(t));
     } catch (e) {
       this.tasks = [];
@@ -139,12 +142,13 @@ class CodeAgentHubView {
         payload.goal += "\n\n【全局约束】\n" + globalInst;
       }
       if (pick.mode === "in_place" && pick.dir) payload.work_dir = pick.dir;
+      payload.agent_group = this.group;
       try {
         const res = await api.agentCreate(payload);
         if (res && res.ok && res.task) {
           this.tasks.unshift(this._map(res.task));
           this.render();
-          codeAgentView.open(res.task.id, res.task.title);
+          codeAgentView.open(res.task.id, res.task.title, this.group);
         }
       } catch (err) {
         alert("创建失败: " + err.message);
@@ -240,12 +244,13 @@ class CodeAgentHubView {
 
       const item = ev.target.closest(".ca-task-item");
       if (item && item !== this.activeSwipeEl) {
-        codeAgentView.open(item.dataset.id, item.dataset.title);
+        codeAgentView.open(item.dataset.id, item.dataset.title, this.group);
       }
     });
   }
 
-  open() {
+  open(group = "coding") {
+    this.group = group || "coding";
     window.router.pushView("code-agent-hub-view");
     this.bindOnce();
     const e = this.els();
