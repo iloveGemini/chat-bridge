@@ -148,12 +148,14 @@ class ChatView {
       e.input.style.height = Math.min(e.input.scrollHeight, 120) + "px";
     }); */
 
+    /* 
     e.input.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter" && !ev.shiftKey && !isMobile) {
         ev.preventDefault();
         if (!this.generating) this.onSend();
       }
     });
+    */
 
     e.imgBtn.addEventListener("click", () => e.file.click());
     e.file.addEventListener("change", (ev) => this.onPickImage(ev));
