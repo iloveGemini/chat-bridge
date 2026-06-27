@@ -12,15 +12,14 @@ def _scene_stamp(session):
     }
 
 
-def check_scene_jump(session):
-    """检测场景是否发生跳转，若是则返回提醒录入记忆的系统提示，并同步 last_scene_id。"""
-    last_id = getattr(session, "last_scene_id", GENESIS_SCENE["scene_id"])
-    cur_id = getattr(session, "current_scene_id", GENESIS_SCENE["scene_id"])
-    if cur_id != last_id:
+def check_scene_transition(session):
+    """检测场景是否发生跳转，若是则返回提醒录入记忆的系统提示。"""
+    last_id = getattr(session, "last_scene_id", None)
+    cur_id = getattr(session, "current_scene_id", None)
+    if last_id is not None and cur_id is not None and cur_id != last_id:
         session.last_scene_id = cur_id
-        return "<system_message>检测到场景发生跳转，请及时总结上一个场景的关键事件并录入记忆。</system_message>\n"
+        return "\n<system_message>场景已发生跳转，请注意提取并录入重要记忆。</system_message>\n"
     return ""
-
 
 def build_scene_block(session):
     """api 模式：拼给 Chat AI 的【当前场景状态 + 信封/转场规约】，注入 tail_anchor。"""
@@ -28,8 +27,7 @@ def build_scene_block(session):
     cur_t = getattr(session, "current_time", GENESIS_SCENE["time"])
     cur_p = getattr(session, "current_place", GENESIS_SCENE["place"])
     
-    transition_msg = check_scene_jump(session)
-    
+    transition_msg = check_scene_transition(session)
     block = (
         "<current_scene_state>\n"
         f"当前场景ID：{cur_id}\n"

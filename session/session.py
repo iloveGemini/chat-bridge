@@ -74,14 +74,11 @@ class ChatSession:
         if not scene_dict:
             return
         if scene_dict.get("scene_id"):
-            if self.current_scene_id != scene_dict["scene_id"]:
-                self.last_scene_id = self.current_scene_id
             self.current_scene_id = scene_dict["scene_id"]
         if scene_dict.get("time"):
             self.current_time = scene_dict["time"]
         if scene_dict.get("place"):
             self.current_place = scene_dict["place"]
-
     def load_messages(self):
         self.messages = memory_store.get_messages(self.session_id)
     def load_active_prompts(self):
