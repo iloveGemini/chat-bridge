@@ -56,14 +56,7 @@ def ingest_reply(session, raw_reply):
     content, scene, meta = parse_msg_envelope(raw_reply)
     if scene:
         with session.lock:
-            if scene.get("scene_id"):
-                if session.current_scene_id != scene["scene_id"]:
-                    session.last_scene_id = session.current_scene_id
-                session.current_scene_id = scene["scene_id"]
-            if scene.get("time"):
-                session.current_time = scene["time"]
-            if scene.get("place"):
-                session.current_place = scene["place"]
+            session.update_scene(scene)
         log_print(
             f"🎬 [场景转换] -> {session.current_scene_id} ({session.current_time} @ {session.current_place})"
         )

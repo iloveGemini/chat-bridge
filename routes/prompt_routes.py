@@ -7,7 +7,7 @@ import memory_store
 from core.net import _safe_decode, _safe_name
 from core.paths import SESSIONS_DIR, PROMPTS_DIR, PRESETS_DIR
 from core.config import config, config_lock, save_config as _save_config
-from session.session import sessions_map, get_session
+from session.session import sessions_map, get_session, SESSION_BINDING_KEYS
 from prompts.prompts import PROMPT_CATEGORIES, PRESET_CATEGORIES
 from prompts import output_formats as _of
 from routes.registry import post, get

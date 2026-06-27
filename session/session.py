@@ -67,7 +67,21 @@ class ChatSession:
                 self.current_scene_id = m.get("scene_id") or self.current_scene_id
                 self.current_time = m.get("time") or self.current_time
                 self.current_place = m.get("place") or self.current_place
+                self.last_scene_id = self.current_scene_id
                 break
+
+    def update_scene(self, scene_dict):
+        """更新场景状态，并记录旧的 scene_id 以便检测跳转。"""
+        if not scene_dict:
+            return
+        if scene_dict.get("scene_id"):
+            if self.current_scene_id != scene_dict["scene_id"]:
+                self.last_scene_id = self.current_scene_id
+            self.current_scene_id = scene_dict["scene_id"]
+        if scene_dict.get("time"):
+            self.current_time = scene_dict["time"]
+        if scene_dict.get("place"):
+            self.current_place = scene_dict["place"]
 
     def load_messages(self):
         if self.messages_file.exists():

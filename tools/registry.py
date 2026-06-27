@@ -88,10 +88,15 @@ def _grp_web():
     return []  # 预留：联网检索工具，暂无
 
 
+def _grp_memory():
+    return [meta["schema"] for name, meta in _REGISTRY.items() if meta["category"] == "rp"]
+
+
 TOOL_GROUPS = {
     "outreach": _grp_outreach,
     "coding": _grp_coding,
     "web": _grp_web,
+    "memory": _grp_memory,
 }
 
 
