@@ -1,14 +1,19 @@
 # -*- coding: utf-8 -*-
 """Code Agent 路由：任务 CRUD / 发送 / 中断 / 上下文 / 轮询 + 本地目录浏览。"""
+
+import json
 import threading
 from pathlib import Path
 
 import runtime.coding_runtime as agent
 import runtime.devteam_store as dstore
-from core.config import config, config_lock, save_config as _save_config
-from agents.manager import run_coding, run_devteam
-from routes.registry import post, get
 from agents.coding.state import CodingState
+from agents.manager import run_coding, run_devteam
+from core.config import config, config_lock
+from core.config import save_config as _save_config
+from routes.registry import get, post
+from token_utils import count_tokens_exact
+
 try:
     from agents.coding.orchestrator import run_coding_task as _run_coding_orchestrator
 except Exception:
@@ -111,6 +116,7 @@ def _confirm(h, query, session, session_id):
             pass
         try:
             from agents.coding.state import CodingState
+
             CodingState(task["workspace"]).set("journal", [])
         except Exception:
             pass
@@ -126,8 +132,10 @@ def _get_mode(h, query, session, session_id):
             out = {"confirm_checkpoints": bool(c.get("confirm_checkpoints", True))}
         else:
             c = config.get("coding", {}) or {}
-            out = {"ask_before_acting": bool(c.get("ask_before_acting", False)),
-                   "commit_per_block": bool(c.get("commit_per_block", False))}
+            out = {
+                "ask_before_acting": bool(c.get("ask_before_acting", False)),
+                "commit_per_block": bool(c.get("commit_per_block", False)),
+            }
     h._json({"ok": True, "group": group, **out})
 
 
@@ -149,8 +157,10 @@ def _set_mode(h, query, session, session_id):
                 c["ask_before_acting"] = bool(data.get("ask_before_acting"))
             if "commit_per_block" in data:
                 c["commit_per_block"] = bool(data.get("commit_per_block"))
-            out = {"ask_before_acting": bool(c.get("ask_before_acting", False)),
-                   "commit_per_block": bool(c.get("commit_per_block", False))}
+            out = {
+                "ask_before_acting": bool(c.get("ask_before_acting", False)),
+                "commit_per_block": bool(c.get("commit_per_block", False)),
+            }
     _save_config()
     h._json({"ok": True, "group": group, **out})
 
@@ -178,7 +188,10 @@ def _approve_plan(h, query, session, session_id):
         h._json({"ok": True})
         return
     from agents.coding.state import CodingState
-    CodingState(task["workspace"]).set("plan_approved", True)  # 批准 → 经理这轮派 developer 不再暂停
+
+    CodingState(task["workspace"]).set(
+        "plan_approved", True
+    )  # 批准 → 经理这轮派 developer 不再暂停
     agent.add_turn(tid, "system", "text", "▶️ 已批准计划，开始执行")
     threading.Thread(target=run_coding, args=(tid, ""), daemon=True).start()
     h._json({"ok": True})
@@ -199,9 +212,11 @@ def _enqueue(h, query, session, session_id):
 @post("/api/agent/context/add")
 def _ctx_add(h, query, session, session_id):
     data = h._read_json()
-    h._json(agent.add_context(
-        data.get("task_id"), data.get("filepath"), data.get("mode") or "outline"
-    ))
+    h._json(
+        agent.add_context(
+            data.get("task_id"), data.get("filepath"), data.get("mode") or "outline"
+        )
+    )
 
 
 @post("/api/agent/context/remove")
@@ -223,7 +238,7 @@ def _task(h, query, session, session_id):
     if not task:
         h._json({"ok": False, "error": "not found"}, 404)
         return
-    
+
     # 附加 todos
     try:
         task["todos"] = CodingState(task["workspace"]).get_todos()
@@ -231,20 +246,28 @@ def _task(h, query, session, session_id):
         task["todos"] = []
 
     cp = agent.get_checkpoint(tid)
-    h._json({
-        "ok": True,
-        "task": task,
-        "checkpoint": cp["card"] if cp else None,
-        "running": agent.is_running(tid),
-        "tree": agent.workspace_tree(tid),
-    })
+    h._json(
+        {
+            "ok": True,
+            "task": task,
+            "checkpoint": cp["card"] if cp else None,
+            "running": agent.is_running(tid),
+            "tree": agent.workspace_tree(tid),
+        }
+    )
 
 
 @get("/api/agent/turns")
 def _turns(h, query, session, session_id):
     tid = query.get("id", [""])[0]
     after = int(query.get("after", ["0"])[0] or 0)
-    h._json({"ok": True, "turns": agent.get_turns(tid, after), "running": agent.is_running(tid)})
+    h._json(
+        {
+            "ok": True,
+            "turns": agent.get_turns(tid, after),
+            "running": agent.is_running(tid),
+        }
+    )
 
 
 @get("/api/logs")
@@ -257,7 +280,24 @@ def _logs(h, query, session, session_id):
 @get("/api/agent/last_prompt")
 def _last_prompt(h, query, session, session_id):
     tid = query.get("id", [""])[0]
-    h._json({"ok": True, "last_prompt": agent.get_last_prompt(tid)})
+    prompt_data = agent.get_last_prompt(tid)
+
+    # 算 token，容错处理
+    tokens = 0
+    if prompt_data:
+        try:
+            tokens = count_tokens_exact(json.dumps(prompt_data, ensure_ascii=False))
+        except Exception:
+            pass
+
+    # 把 tokens 一起丢给前端
+    h._json(
+        {
+            "ok": True,
+            "last_prompt": prompt_data,
+            "tokens": tokens,  # 👈 新增的字段
+        }
+    )
 
 
 @get("/api/agent/context")
@@ -278,10 +318,16 @@ def _fs_list(h, query, session, session_id):
     raw = query.get("path", [""])[0]
     try:
         import os
+
         if not raw:
             if os.name == "nt":
                 import string
-                roots = [f"{d}:\\" for d in string.ascii_uppercase if os.path.exists(f"{d}:\\")]
+
+                roots = [
+                    f"{d}:\\"
+                    for d in string.ascii_uppercase
+                    if os.path.exists(f"{d}:\\")
+                ]
                 h._json({"ok": True, "path": "", "parent": None, "dirs": roots})
             else:
                 base = Path("/")

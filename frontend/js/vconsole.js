@@ -91,6 +91,7 @@ export class VConsole {
     }
 
     // 普通聊天：用当前激活会话拉调试 payload
+    // 普通聊天：用当前激活会话拉调试 payload
     const sid = (store.getState && store.getState().activeSessionId) || null;
     if (!sid) {
       this.log("[System] 当前没有激活的聊天会话", "#ffae57");
@@ -102,16 +103,74 @@ export class VConsole {
         this.log(`[System] 该会话暂无 Prompt 记录（${sid}）`, "#ffae57");
         return;
       }
+
+      const totalTokensInfo = lp.tokens ? ` | 总估算 Tokens: ${lp.tokens}` : "";
       this.log(
-        `===== chat last_prompt  session=${sid}  model=${lp.model}  @${lp.ts} =====`,
+        `\n===== chat last_prompt session=${sid} model=${lp.model} @${lp.ts}${totalTokensInfo} =====`,
         "#ffae57",
       );
+
       (lp.messages || []).forEach((m, i) => {
         const c =
           typeof m.content === "string" ? m.content : JSON.stringify(m.content);
-        this.log(`[#${i} ${m.role}] ${c}`, "#9cdcfe");
+
+        // 在 UI 打印角色头部
+        this.log(`[#${i} ${m.role}] ----------------`, "#e5c07b");
+
+        // 在 F12 控制台开启一个可折叠的 Message 组
+        console.groupCollapsed(`[#${i} ${m.role}] 完整折叠视图 (点击展开)`);
+
+        const xmlRegex = /<([a-zA-Z0-9_:-]+)(?:\s+[^>]*)?>([\s\S]*?)<\/\1>/g;
+        let match;
+        let lastIndex = 0;
+
+        while ((match = xmlRegex.exec(c)) !== null) {
+          // 1. 处理 XML 标签外的纯文本
+          if (match.index > lastIndex) {
+            const textBefore = c.substring(lastIndex, match.index).trim();
+            if (textBefore) {
+              this.log(textBefore, "#9cdcfe"); // 打印到 UI
+              console.log(textBefore); // 打印到 F12
+            }
+          }
+
+          // 2. 处理提取出的 XML 块
+          const tagName = match[1];
+          const body = match[2];
+          const subTokens = Math.ceil(body.trim().length / 2); // 粗算 Token
+
+          // UI 上的纯文本视觉分割（换个紫色高亮，更醒目）
+          this.log(
+            `\n▼ ▼ ▼ <${tagName}> (约 ${subTokens} Tokens) ▼ ▼ ▼`,
+            "#c678dd",
+          );
+          this.log(body.trim() || "(无内容)", "#9cdcfe");
+          this.log(`▲ ▲ ▲ /${tagName} 结束 ▲ ▲ ▲\n`, "#c678dd");
+
+          // F12 控制台里的原生折叠卡片！
+          console.groupCollapsed(`<${tagName}> (约 ${subTokens} Tokens)`);
+          console.log(body.trim() || "(无内容)");
+          console.groupEnd();
+
+          lastIndex = xmlRegex.lastIndex;
+        }
+
+        // 3. 处理结尾剩下的纯文本
+        if (lastIndex < c.length) {
+          const textAfter = c.substring(lastIndex).trim();
+          if (textAfter) {
+            this.log(textAfter, "#9cdcfe");
+            console.log(textAfter);
+          }
+        }
+
+        console.groupEnd(); // 结束 F12 里的这条 Message 组
       });
-      this.log(`===== end (${(lp.messages || []).length} 条) =====`, "#ffae57");
+
+      this.log(
+        `===== end (${(lp.messages || []).length} 条) =====\n`,
+        "#ffae57",
+      );
     } catch (err) {
       this.log("[System] 获取 Prompt 失败: " + err.message, "#ff5f56");
     }

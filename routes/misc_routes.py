@@ -1,15 +1,17 @@
 # -*- coding: utf-8 -*-
 """杂项路由：主动联系(outreach)增删改查、会话工具授权、消息/状态/打字/长轮询。"""
+
 import json
 import time
 
 import scheduler
+from chat.outreach import _parse_when
 from core.config import config
 from core.net import _safe_decode
-from chat.outreach import _parse_when
-from session.session import global_pending_event, _find_pending_session
+from routes.registry import get, post
+from session.session import _find_pending_session, global_pending_event
 from session.tools import get_session_tools, set_session_tools
-from routes.registry import post, get
+from token_utils import count_tokens_exact
 
 
 @post("/api/outreach")
@@ -48,11 +50,7 @@ def _outreach_toggle(h, query, session, session_id):
     data = json.loads(_safe_decode(h.rfile.read(length)))
     rid = data.get("id")
     h._json(
-        {
-            "ok": scheduler.set_enabled(rid, bool(data.get("enabled")))
-            if rid
-            else False
-        }
+        {"ok": scheduler.set_enabled(rid, bool(data.get("enabled"))) if rid else False}
     )
 
 
@@ -82,7 +80,17 @@ def _get_tools_get(h, query, session, session_id):
 @get("/api/debug/last_prompt")
 def _get_debug_last_prompt(h, query, session, session_id):
     if session.last_llm_payload:
-        h._json(session.last_llm_payload)
+        payload = session.last_llm_payload
+        # 1. 算一下这个 payload 的 Token
+        tokens = count_tokens_exact(json.dumps(payload, ensure_ascii=False))
+
+        # 2. 把 token 字段加进返回结果里
+        # 注意：这里可能需要根据你原先前端怎么取值来决定是直接合并字典，还是包一层
+        if isinstance(payload, dict):
+            payload["tokens"] = tokens
+            h._json(payload)
+        else:
+            h._json({"payload": payload, "tokens": tokens})
     else:
         h._json({"error": "暂无记录"})
     return
@@ -146,9 +154,7 @@ def _get_wait_pending(h, query, session, session_id):
 @get("/api/typing_status")
 def _get_typing_status(h, query, session, session_id):
     with session.lock:
-        if session.is_typing and (
-            time.time() - session.typing_ts > 120
-        ):  # 改为 120
+        if session.is_typing and (time.time() - session.typing_ts > 120):  # 改为 120
             session.is_typing = False
             session.current_status = ""
         # pending 不受 120s 超时影响：只有真正回复/中断/清空才会解除，是前端解锁等待态的唯一依据
@@ -175,9 +181,7 @@ def _get_status(h, query, session, session_id):
             if last_user_ts and last_any_ts:
                 break
 
-        if session.is_typing and (
-            time.time() - session.typing_ts > 120
-        ):  # 改为 120
+        if session.is_typing and (time.time() - session.typing_ts > 120):  # 改为 120
             session.is_typing = False
             session.current_status = ""
 
@@ -201,4 +205,3 @@ def _get_outreach_list(h, query, session, session_id):
     # 列出当前会话的主动联系任务
     h._json({"jobs": scheduler.list_jobs(session.session_id)})
     return
-

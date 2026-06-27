@@ -5,12 +5,13 @@
 sessions_map / global_pending_event 是【就地修改】的单例，绝不重新赋值，
 所以各模块 import 到的是同一对象。
 """
+
 import json
 import threading
 import time
 
-from core.paths import SESSIONS_DIR
 import memory_store
+from core.paths import SESSIONS_DIR
 
 # 会话实际绑定的选择（只存名字）。preset 在生成时展开成 main/style/post。
 SESSION_BINDING_KEYS = ["preset", "user", "character"]
@@ -74,13 +75,17 @@ class ChatSession:
         if not scene_dict:
             return
         if scene_dict.get("scene_id"):
+            if self.current_scene_id != scene_dict["scene_id"]:
+                self.last_scene_id = self.current_scene_id
             self.current_scene_id = scene_dict["scene_id"]
         if scene_dict.get("time"):
             self.current_time = scene_dict["time"]
         if scene_dict.get("place"):
             self.current_place = scene_dict["place"]
+
     def load_messages(self):
         self.messages = memory_store.get_messages(self.session_id)
+
     def load_active_prompts(self):
         if self.prompts_file.exists():
             try:
@@ -123,6 +128,7 @@ class ChatSession:
         with self.lock:
             self._ensure_dir()
             memory_store.save_messages(self.session_id, self.messages)
+
     def read_memory(self):
         if self.memory_file.exists():
             try:

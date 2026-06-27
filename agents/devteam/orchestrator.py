@@ -8,63 +8,105 @@
 - 确认门：仅 phase_change / architecture.approved 三类检查点；开启「逐步确认」时升 plan_card 暂停，
   复用 /api/agent/approve_plan 续跑。
 """
+
 import json
 
 import runtime.coding_runtime as agent
 import runtime.devteam_store as dstore
 from agents.base import AgentContext, AgentResult
-from agents.manager import BaseManager
+from agents.devteam.messages import event_log, protocol
 from agents.devteam.phase import run_role
 from agents.devteam.roles import ROLE_PROMPTS
+from agents.devteam.routing import AUTO, WORKER_ROLES, classify, parse_mention
 from agents.devteam.state import ProjectStateStore, default_state
-from agents.devteam.state.store import classify_checkpoint
-from agents.devteam.messages import protocol, event_log
-from agents.devteam.routing import classify, parse_mention, WORKER_ROLES, AUTO
-from tools.registry import _REGISTRY
 from agents.devteam.state.project_state import PHASES
+from agents.devteam.state.store import classify_checkpoint
+from agents.manager import BaseManager
+from token_utils import count_tokens_exact
+from tools.registry import _REGISTRY
 
 ROLE_ENDPOINT = {
-    "manager": "api", "architect": "api", "designer": "api",
-    "context_engineer": "worker_api", "programmer": "api",
-    "checker_tech": "worker_api", "checker_design": "worker_api",
+    "manager": "api",
+    "architect": "api",
+    "designer": "api",
+    "context_engineer": "worker_api",
+    "programmer": "api",
+    "checker_tech": "worker_api",
+    "checker_design": "worker_api",
 }
 ROLE_MAX_ROUNDS = {
-    "context_engineer": 12, "architect": 10, "designer": 10,
-    "programmer": 20, "checker_tech": 14, "checker_design": 10,
+    "context_engineer": 30,
+    "architect": 10,
+    "designer": 10,
+    "programmer": 20,
+    "checker_tech": 20,
+    "checker_design": 15,
 }
 MAX_MANAGER_ROUNDS = 12
 
 
 def _dispatch_tool():
-    return {"type": "function", "function": {
-        "name": "dispatch",
-        "description": "派一个角色去做一件具体的事并拿回 REPORT。一次派一个。你自己不实现。",
-        "parameters": {"type": "object", "properties": {
-            "role": {"type": "string", "enum": list(WORKER_ROLES)},
-            "instruction": {"type": "string", "description": "交给该角色的明确任务，尽量自包含"},
-            "reason": {"type": "string", "description": "一句话说明为何此刻派它（作为旁白展示）"},
-        }, "required": ["role", "instruction", "reason"]}}}
+    return {
+        "type": "function",
+        "function": {
+            "name": "dispatch",
+            "description": "派一个角色去做一件具体的事并拿回 REPORT。一次派一个。你自己不实现。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "role": {"type": "string", "enum": list(WORKER_ROLES)},
+                    "instruction": {
+                        "type": "string",
+                        "description": "交给该角色的明确任务，尽量自包含",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "一句话说明为何此刻派它（作为旁白展示）",
+                    },
+                },
+                "required": ["role", "instruction", "reason"],
+            },
+        },
+    }
 
 
 def _advance_phase_tool():
-    return {"type": "function", "function": {
-        "name": "advance_phase",
-        "description": ("推进项目阶段（这是你唯一会写的状态）。合法转移："
-                        "intake→planning→design→implementation→verification→release；"
-                        "也可 implementation→design / verification→implementation 返工。每次必须给 reason。"),
-        "parameters": {"type": "object", "properties": {
-            "to": {"type": "string", "enum": list(PHASES)},
-            "reason": {"type": "string"},
-        }, "required": ["to", "reason"]}}}
+    return {
+        "type": "function",
+        "function": {
+            "name": "advance_phase",
+            "description": (
+                "推进项目阶段（这是你唯一会写的状态）。合法转移："
+                "intake→planning→design→implementation→verification→release；"
+                "也可 implementation→design / verification→implementation 返工。每次必须给 reason。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "to": {"type": "string", "enum": list(PHASES)},
+                    "reason": {"type": "string"},
+                },
+                "required": ["to", "reason"],
+            },
+        },
+    }
 
 
 def _finish_tool():
-    return {"type": "function", "function": {
-        "name": "finish",
-        "description": "全部验收通过、可交付时调用，转用户确认。",
-        "parameters": {"type": "object", "properties": {
-            "summary": {"type": "string", "description": "交付小结"}},
-            "required": ["summary"]}}}
+    return {
+        "type": "function",
+        "function": {
+            "name": "finish",
+            "description": "全部验收通过、可交付时调用，转用户确认。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "summary": {"type": "string", "description": "交付小结"}
+                },
+                "required": ["summary"],
+            },
+        },
+    }
 
 
 def _manager_tools():
@@ -94,6 +136,7 @@ class DevTeamOrchestrator(BaseManager):
             except Exception:
                 pass
             return agent._chat(endpoint, messages, tools=tools or None, temperature=0.3)
+
         return _fn
 
     def _emit(self, kind, data):
@@ -111,8 +154,11 @@ class DevTeamOrchestrator(BaseManager):
 
     def _confirm_checkpoints(self):
         try:
-            return bool((agent.load_config().get("devteam", {}) or {}).get(
-                "confirm_checkpoints", True))
+            return bool(
+                (agent.load_config().get("devteam", {}) or {}).get(
+                    "confirm_checkpoints", True
+                )
+            )
         except Exception:
             return True
 
@@ -127,26 +173,40 @@ class DevTeamOrchestrator(BaseManager):
         p = s["project"]
         v = s["verification"]
         feats = ", ".join(s["implementation"]["features"].keys()) or "(无)"
-        return (f"phase={p['phase']} status={p['status']} | "
-                f"req.frozen={s['requirements']['frozen']} "
-                f"arch.approved={s['architecture']['approved']} "
-                f"design.approved={s['design']['approved']} | "
-                f"features=[{feats}] | "
-                f"verify.tech={v['tech']['pass']} verify.design={v['design']['pass']}")
+        return (
+            f"phase={p['phase']} status={p['status']} | "
+            f"req.frozen={s['requirements']['frozen']} "
+            f"arch.approved={s['architecture']['approved']} "
+            f"design.approved={s['design']['approved']} | "
+            f"features=[{feats}] | "
+            f"verify.tech={v['tech']['pass']} verify.design={v['design']['pass']}"
+        )
 
     # ---------------- 状态落地 + 确认门 ----------------
     def _gate_or_apply(self, actor, op, label, journal):
         """返回 ('applied'|'gated'|'rejected', result)。命中检查点且开启确认时升门并暂停。"""
         cp = classify_checkpoint(op)
         if cp and self._confirm_checkpoints():
-            dstore.set_kv(self.task_id, "pending_gate",
-                          {"actor": actor, "op": op, "label": label, "checkpoint": cp})
+            dstore.set_kv(
+                self.task_id,
+                "pending_gate",
+                {"actor": actor, "op": op, "label": label, "checkpoint": cp},
+            )
             dstore.del_kv(self.task_id, "gate_approved")
-            event_log.log(self.task_id, event_log.GATE_RAISED, actor=actor,
-                          reason=f"{cp}: {label}")
-            agent.add_turn(self.task_id, "assistant", "plan_card",
-                           json.dumps({"plan": f"待确认状态变更（{cp}）：{label}"},
-                                      ensure_ascii=False))
+            event_log.log(
+                self.task_id,
+                event_log.GATE_RAISED,
+                actor=actor,
+                reason=f"{cp}: {label}",
+            )
+            agent.add_turn(
+                self.task_id,
+                "assistant",
+                "plan_card",
+                json.dumps(
+                    {"plan": f"待确认状态变更（{cp}）：{label}"}, ensure_ascii=False
+                ),
+            )
             self._emit("await_plan", {"plan": label})
             journal.append(f"⏸ 升起确认门（{cp}）：{label}")
             return "gated", None
@@ -158,52 +218,188 @@ class DevTeamOrchestrator(BaseManager):
                 agent.add_turn(self.task_id, "system", "text", f"⚠️ {res['warn']}")
                 journal.append(f"⚠️ {res['warn']}")
             return "applied", res
-        agent.add_turn(self.task_id, "system", "text", f"⛔ 状态变更被拒：{res.get('reason')}")
+        agent.add_turn(
+            self.task_id, "system", "text", f"⛔ 状态变更被拒：{res.get('reason')}"
+        )
         journal.append(f"⛔ 拒绝：{res.get('reason')}")
         return "rejected", res
 
     def _apply_intents(self, actor, intents, journal):
         """落地一个角色提交的若干 intent。命中检查点则升门并返回 True（已暂停）。"""
-        for it in intents:
+        for i, it in enumerate(intents):
             conf = it.get("confidence", 100)
             band = protocol.confidence_band(conf)
             if band == "block":
-                protocol.persist(protocol.build_block(
-                    self.task_id, actor, "manager",
-                    missing="把握不足", why=f"confidence={conf}",
-                    need="Manager 复核或补充信息", confidence=conf))
+                protocol.persist(
+                    protocol.build_block(
+                        self.task_id,
+                        actor,
+                        "manager",
+                        missing="把握不足",
+                        why=f"confidence={conf}",
+                        need="Manager 复核或补充信息",
+                        confidence=conf,
+                    )
+                )
                 journal.append(f"{actor} 低置信({conf})，记 BLOCK，转 Manager 复核")
             label = f"{actor}→{it.get('layer')} {json.dumps(it.get('patch'), ensure_ascii=False)[:80]}"
             status, _ = self._gate_or_apply(actor, it, label, journal)
             if status == "gated":
+                if i + 1 < len(intents):
+                    dstore.set_kv(
+                        self.task_id,
+                        "pending_intents",
+                        {"actor": actor, "intents": intents[i + 1:]}
+                    )
                 return True
         return False
 
+    # ---------------- 上下文管理 ----------------
+    def _context_briefs_text(self, role=None, max_tokens=6000):
+        """把 Context Engineer 已整理的简报取出来，按 Token 长度截断"""
+        rows = dstore.list_context(self.task_id)
+        if not rows:
+            return ""
+
+        # 动态分配 Context 容量
+        role_token_limits = {
+            "programmer": 60000,  # 程序员：需要看大量代码细节
+            "architect": 40000,  # 架构师：需要看系统全貌
+            "checker_tech": 40000,  # 审查员：需要对照代码
+            "context_engineer": 20000,  # 上下文工程师：适中即可
+        }
+        if role is not None:
+            max_tokens = role_token_limits.get(role, max_tokens)
+
+        selected_briefs = []
+        current_tokens = 0
+
+        # 倒序遍历，优先拿最新的 Context
+        for r in reversed(rows):
+            content = f"[{r.get('kind', 'brief')}:{r.get('key', '')}]\n{(r.get('content') or '')}"
+            tokens = count_tokens_exact(content)  # 直接调用！
+
+            # 即使第一条就超了，也至少硬塞一条进去，保证哪怕超限也有点上下文
+            if current_tokens + tokens <= max_tokens or not selected_briefs:
+                selected_briefs.append(content)
+                current_tokens += tokens
+            else:
+                break  # 塞不下了，停止注入
+
+        # 翻转回来按时间正序拼接
+        return "\n\n".join(reversed(selected_briefs))
+
+    # 需要先有充分上下文才好动手的角色（进入它们前先问够不够）
+    _CONTEXT_HUNGRY = (
+        "architect",
+        "designer",
+        "programmer",
+        "checker_tech",
+        "checker_design",
+    )
+
+    def _ensure_context(self, role, instruction, journal):
+        """充分性门：用便宜模型(worker_api)判断当前上下文够不够 role 干这件事；
+        不够就先自动派 Context Engineer 去补，避免高级模型自己翻代码、被 RPM 卡。"""
+        available = (
+            f"项目状态: {self._state_brief()}\n"
+            f"已有简报:\n{self._context_briefs_text(role=role) or '(无)'}"
+        )
+        probe = [
+            {
+                "role": "system",
+                "content": "你是上下文充分性检查器。判断【已有上下文】是否足以让该角色直接动手完成【任务】。"
+                '只输出 JSON：{"sufficient": true/false, "missing": ["缺什么"]}。'
+                "宁可严格：缺关键现状/文件/约束就判 false。",
+            },
+            {
+                "role": "user",
+                "content": f"角色: {role}\n任务: {instruction}\n\n【已有上下文】\n{available}",
+            },
+        ]
+        try:
+            res = agent._chat("worker_api", probe, temperature=0.1, timeout=60)
+            raw = (res.get("choices") or [{}])[0].get("message", {}).get(
+                "content", ""
+            ) or ""
+            s, e = raw.find("{"), raw.rfind("}")
+            data = json.loads(raw[s : e + 1]) if s >= 0 and e > s else {}
+        except Exception:
+            data = {}
+        if data.get("sufficient", True):  # 探测失败/判够 → 默认放行，绝不误卡
+            return {"ok": True}
+        missing = data.get("missing") or []
+        tip = ("; ".join(missing))[:160] or "相关现状/文件/约束"
+        agent.add_turn(
+            self.task_id,
+            "system",
+            "text",
+            f"🔎 {role} 上下文不足，先派 Context Engineer 收集：{tip}",
+        )
+        journal.append(f"上下文门：{role} 不足 → Context 先补（{tip}）")
+        ctx_instr = (
+            f"为 {role} 的下一步收集上下文并 save_context 存成 brief。"
+            f"目标任务：{instruction}\n需要补齐：{tip}"
+        )
+        res = self._run_role("context_engineer", ctx_instr, journal, ensure_context=False)
+        if res and res.get("gated"):
+            return {"gated": True}
+        return {"ok": True}
+
     # ---------------- 跑一个角色 ----------------
-    def _run_role(self, role, instruction, journal):
-        agent.add_turn(self.task_id, "system", "text", f"🧭 派单 → {role}：{instruction[:160]}")
+    def _run_role(self, role, instruction, journal, ensure_context=True):
+        # 充分性门：进入"需要充分上下文"的角色前，先问够不够，不够让 Context 先做
+        if ensure_context and role in self._CONTEXT_HUNGRY:
+            res = self._ensure_context(role, instruction, journal)
+            if res and res.get("gated"):
+                return {"gated": True}
+
+        agent.add_turn(
+            self.task_id, "system", "text", f"🧭 派单 → {role}：{instruction[:160]}"
+        )
         self._emit("dispatch", {"role": role, "instruction": instruction})
-        event_log.log(self.task_id, event_log.ROLE_DISPATCHED, actor="manager",
-                      reason=f"{role}: {instruction[:120]}")
+        event_log.log(
+            self.task_id,
+            event_log.ROLE_DISPATCHED,
+            actor="manager",
+            reason=f"{role}: {instruction[:120]}",
+        )
         task_msg = protocol.build_task(self.task_id, "manager", role, goal=instruction)
         protocol.persist(task_msg)
 
-        handoff = (f"【项目总目标】\n{self._goal()}\n\n【当前状态】\n{self._state_brief()}\n\n"
-                   f"【你这次的任务】\n{instruction}\n\n"
-                   f"【最近进展】\n{chr(10).join(journal[-8:]) if journal else '(无)'}")
+        briefs = self._context_briefs_text(role=role)
+        handoff = (
+            f"【项目总目标】\n{self._req()}\n\n【当前状态】\n{self._state_brief()}\n\n"
+            f"【你这次的任务】\n{instruction}\n\n"
+            + (
+                f"【可用上下文（Context Engineer 已整理，优先用，别重复侦察）】\n{briefs}\n\n"
+                if briefs
+                else ""
+            )
+            + f"【最近进展】\n{chr(10).join(journal[-8:]) if journal else '(无)'}"
+        )
         res = run_role(
-            role, handoff,
+            role,
+            handoff,
             chat_fn=self._chat_for(ROLE_ENDPOINT.get(role, "api")),
-            tool_ctx=self.ctx, task_id=self.task_id, emit=self._on_event,
+            tool_ctx=self.ctx,
+            task_id=self.task_id,
+            emit=self._on_event,
             workspace_tree=self._workspace_tree(),
             is_cancelled=lambda: agent._check_cancel(self.task_id),
             max_rounds=ROLE_MAX_ROUNDS.get(role, 10),
         )
-        text = res.get("text", "") or "(无输出)"
+        
+        text = res.get("text", "")
+        if not text:
+            text = f"（该角色已达到最大执行轮数 {ROLE_MAX_ROUNDS.get(role)} 且未能输出最终报告。它最后的操作记录是：{chr(10).join(journal[-3:])}。请 Manager 根据这些记录决定是重派、换人还是推进阶段。）"
         intents = res.get("intents", []) or []
         conf = min([i.get("confidence", 100) for i in intents], default=100)
-        protocol.persist(protocol.build_report(
-            self.task_id, role, "manager", result=text[:4000], confidence=conf))
+        protocol.persist(
+            protocol.build_report(
+                self.task_id, role, "manager", result=text[:4000], confidence=conf
+            )
+        )
         gated = self._apply_intents(role, intents, journal)
         journal.append(f"{role} REPORT：{text[:300]}")
         return {"text": text, "gated": gated}
@@ -211,10 +407,16 @@ class DevTeamOrchestrator(BaseManager):
     def _goal(self):
         return (self.task or {}).get("goal", "") or (self.task or {}).get("title", "")
 
+    def _req(self):
+        """真实需求：优先用户首条输入，回落任务名。"""
+        return dstore.get_kv(self.task_id, "user_request") or self._goal()
+
     # ---------------- 统一节点接口 ----------------
     def run(self, ctx: AgentContext) -> AgentResult:
-        res = self.run_turn(ctx.user_msg, {"task": (ctx.shared or {}).get("task"),
-                                           "on_event": ctx.on_event})
+        res = self.run_turn(
+            ctx.user_msg,
+            {"task": (ctx.shared or {}).get("task"), "on_event": ctx.on_event},
+        )
         status = "done" if res.get("done") else "need_user"
         return AgentResult(status=status, output=res.get("final_text"))
 
@@ -229,7 +431,9 @@ class DevTeamOrchestrator(BaseManager):
         self.store = ProjectStateStore(self.task_id, name=self.task.get("title", ""))
         # 首次：物化默认状态树，前端可读
         if dstore.load_snapshot(self.task_id) is None:
-            dstore.save_snapshot(self.task_id, default_state(self.task_id, self.task.get("title", "")))
+            dstore.save_snapshot(
+                self.task_id, default_state(self.task_id, self.task.get("title", ""))
+            )
 
         if agent._running.get(self.task_id):
             raise RuntimeError("该任务正在运行中")
@@ -244,29 +448,79 @@ class DevTeamOrchestrator(BaseManager):
             if user_msg:
                 agent.add_turn(self.task_id, "user", "text", user_msg)
                 self._emit("user", user_msg)
+                # 第一条真实输入 = 原始需求（goal 只是任务名/标题，不是需求）
+                if user_msg.strip() and not dstore.get_kv(self.task_id, "user_request"):
+                    dstore.set_kv(self.task_id, "user_request", user_msg.strip())
 
             # 1) 处理挂起的确认门
             pending = dstore.get_kv(self.task_id, "pending_gate")
             approved = dstore.get_kv(self.task_id, "gate_approved", False)
             if pending:
-                if approved and not user_msg:
+                if approved:
                     res = self.store.apply(pending["actor"], pending["op"])
-                    event_log.log(self.task_id, event_log.GATE_APPROVED,
-                                  actor=pending["actor"], reason=pending.get("label", ""))
-                    agent.add_turn(self.task_id, "system", "text",
-                                   f"▶️ 已批准：{pending.get('label', '')}")
+                    if not res.get("ok"):
+                        error_msg = res.get("reason") or res.get("error") or "未知错误"
+                        agent.add_turn(
+                            self.task_id,
+                            "system",
+                            "text",
+                            f"❌ 批准执行失败：{error_msg}",
+                        )
+                        dstore.del_kv(self.task_id, "gate_approved")
+                        return {
+                            "final_text": f"执行失败：{error_msg}，请检查后重试。",
+                            "done": False,
+                            "waiting_user": False,
+                            "await_confirm": False,
+                            "await_state_approval": True,
+                            "interrupted": False,
+                            "phase": self._phase(),
+                        }
+
+                    event_log.log(
+                        self.task_id,
+                        event_log.GATE_APPROVED,
+                        actor=pending["actor"],
+                        reason=pending.get("label", ""),
+                    )
+                    agent.add_turn(
+                        self.task_id,
+                        "system",
+                        "text",
+                        f"▶️ 已批准：{pending.get('label', '')}",
+                    )
                     journal.append(f"用户已批准检查点：{pending.get('label', '')}")
                     dstore.del_kv(self.task_id, "pending_gate")
                     dstore.del_kv(self.task_id, "gate_approved")
-                elif user_msg:
-                    journal.append("用户改发新指示，放弃上一个挂起的确认门")
-                    dstore.del_kv(self.task_id, "pending_gate")
-                    dstore.del_kv(self.task_id, "gate_approved")
 
+                    # 恢复执行挂起的 intents
+                    while True:
+                        pending_intents = dstore.get_kv(self.task_id, "pending_intents")
+                        if not pending_intents:
+                            break
+                        dstore.del_kv(self.task_id, "pending_intents")
+                        actor = pending_intents["actor"]
+                        intents = pending_intents["intents"]
+                        if self._apply_intents(actor, intents, journal):
+                            dstore.set_kv(self.task_id, "journal", journal[-80:])
+                            return {
+                                "final_text": f"{actor} 提交的后续变更命中确认检查点，请确认。",
+                                "done": False,
+                                "waiting_user": False,
+                                "await_confirm": False,
+                                "await_state_approval": True,
+                                "interrupted": False,
+                                "phase": self._phase(),
+                            }
             # 2) 路由：手动 @角色 vs 自动
             route_role, body = parse_mention(user_msg) if user_msg else (None, "")
             if route_role == AUTO:
-                event_log.log(self.task_id, event_log.ROUTE, actor="user", reason="@auto 交还自动路由")
+                event_log.log(
+                    self.task_id,
+                    event_log.ROUTE,
+                    actor="user",
+                    reason="@auto 交还自动路由",
+                )
                 route_role = None
 
             if route_role:
@@ -279,48 +533,89 @@ class DevTeamOrchestrator(BaseManager):
         except Exception as e:
             agent._log("DevTeam 回合出错:", e)
             try:
-                agent.add_turn(self.task_id, "system", "text",
-                               f"⚠️ 系统错误：{e}（已停在此处，可再发消息续跑）")
+                agent.add_turn(
+                    self.task_id,
+                    "system",
+                    "text",
+                    f"⚠️ 系统错误：{e}（已停在此处，可再发消息续跑）",
+                )
                 agent.update_task(self.task_id, status="失败")
             except Exception:
                 pass
-            return {"final_text": f"系统错误：{e}", "done": False, "waiting_user": False,
-                    "await_confirm": False, "interrupted": True, "phase": self._phase()}
+            return {
+                "final_text": f"系统错误：{e}",
+                "done": False,
+                "waiting_user": False,
+                "await_confirm": False,
+                "interrupted": True,
+                "phase": self._phase(),
+            }
         finally:
             agent._running[self.task_id] = False
 
     # ---------------- 手动路由：直派单个角色 ----------------
     def _turn_manual(self, role, body, journal):
-        event_log.log(self.task_id, event_log.ROUTE, actor="user", reason=f"@{role} 手动直派")
+        event_log.log(
+            self.task_id, event_log.ROUTE, actor="user", reason=f"@{role} 手动直派"
+        )
         if role == "manager":
             # @manager 等价于交给自动协调
             return self._turn_auto(body, journal)
-        r = self._run_role(role, body or "（未给具体指令，按你的职责对当前状态给出建议）", journal)
+        r = self._run_role(
+            role, body or "（未给具体指令，按你的职责对当前状态给出建议）", journal
+        )
         final_text = r["text"]
         agent.add_turn(self.task_id, "assistant", "text", f"[{role}] {final_text}")
         self._emit("assistant", final_text)
         gated = r["gated"]
         self._finalize_status(waiting_user=not gated, await_state=gated)
-        return {"final_text": final_text, "done": False, "waiting_user": not gated,
-                "await_confirm": False, "await_state_approval": gated,
-                "interrupted": False, "phase": self._phase()}
+        return {
+            "final_text": final_text,
+            "done": False,
+            "waiting_user": not gated,
+            "await_confirm": False,
+            "await_state_approval": gated,
+            "interrupted": False,
+            "phase": self._phase(),
+        }
 
     # ---------------- 自动路由：Manager 协调循环 ----------------
     def _turn_auto(self, user_msg, journal):
         intake = classify(user_msg) if user_msg else None
-        sys_full = (ROLE_PROMPTS["manager"]
-                    + "\n\n【环境】沙箱 Windows，路径相对工作区根。"
-                    + (f"\n\n【工作区文件树】\n{self._workspace_tree()}"
-                       if self._workspace_tree() else ""))
-        user0 = (f"【原始需求】\n{self._goal()}\n\n【当前项目状态】\n{self._state_brief()}")
+        sys_full = (
+            ROLE_PROMPTS["manager"]
+            + "\n\n【环境】沙箱 Windows，路径相对工作区根。"
+            + (
+                f"\n\n【工作区文件树】\n{self._workspace_tree()}"
+                if self._workspace_tree()
+                else ""
+            )
+        )
+        req = (
+            dstore.get_kv(self.task_id, "user_request")
+            or self._goal()
+            or "(沿用既有任务目标)"
+        )
+        user0 = (
+            f"【原始需求】\n{req}\n\n【任务名】{self._goal()}"
+            f"\n\n【当前项目状态】\n{self._state_brief()}"
+        )
+        if user_msg and user_msg.strip() and user_msg.strip() != (req or "").strip():
+            user0 += f"\n\n【用户最新消息（本轮输入，优先回应）】\n{user_msg.strip()}"
         if intake:
-            user0 += (f"\n\n【Intake 建议（可采纳可调整）】类别={intake['category']} "
-                      f"主负责={intake['primary_owner']} 建议链={'→'.join(intake['chain'])}")
+            user0 += (
+                f"\n\n【Intake 建议（可采纳可调整）】类别={intake['category']} "
+                f"主负责={intake['primary_owner']} 建议链={'→'.join(intake['chain'])}"
+            )
         if journal:
-            user0 += "\n\n【项目进度记录（承接它继续，别重做）】\n" + "\n".join(journal[-30:])
+            user0 += "\n\n【项目进度记录（承接它继续，别重做）】\n" + "\n".join(
+                journal[-30:]
+            )
 
-        messages = [{"role": "system", "content": sys_full},
-                    {"role": "user", "content": user0}]
+        messages = [
+            {"role": "system", "content": sys_full},
+            {"role": "user", "content": user0},
+        ]
         tools = _manager_tools()
         mgr_chat = self._chat_for("api")
 
@@ -330,26 +625,64 @@ class DevTeamOrchestrator(BaseManager):
         await_state = False
         interrupted = False
 
+        use_pending_tcs = False
+        pending_tcs_data = dstore.get_kv(self.task_id, "pending_tool_calls")
+        if pending_tcs_data and not user_msg:
+            use_pending_tcs = True
+            pending_tcs = pending_tcs_data["tcs"]
+            dstore.del_kv(self.task_id, "pending_tool_calls")
+
         for _round in range(MAX_MANAGER_ROUNDS):
             if agent._check_cancel(self.task_id):
                 interrupted = True
                 break
-            res = mgr_chat(messages, tools)
-            choice = (res.get("choices") or [{}])[0].get("message", {}) or {}
-            content = (choice.get("content") or "").strip()
-            tcs = choice.get("tool_calls") or []
-            if content:
-                agent.add_turn(self.task_id, "assistant", "text", f"[manager] {content}")
-                self._emit("assistant", f"[manager] {content}")
-                journal.append(f"经理：{content[:300]}")
-            if not tcs:
-                waiting_user = True
-                final_text = content or "（需要你的进一步指示。）"
-                break
-            messages.append({"role": "assistant", "content": choice.get("content") or "",
-                             "tool_calls": tcs})
+            # 接住用户中途插入的消息（/api/agent/enqueue 入队），织进本轮，不丢不硬断
+            injected = agent._drain_queue(self.task_id)
+            if injected:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": "【用户追加/修改需求，请纳入考虑】\n"
+                        + "\n".join(injected),
+                    }
+                )
+                journal.append("用户追加：" + (" | ".join(injected))[:200])
+                self._emit("user", "（已接住你的追加消息）")
+            
+            if use_pending_tcs:
+                tcs = pending_tcs
+                content = ""
+                messages.append({
+                    "role": "assistant",
+                    "content": "(Resuming pending tool calls)",
+                    "tool_calls": tcs
+                })
+                use_pending_tcs = False
+            else:
+                res = mgr_chat(messages, tools)
+                choice = (res.get("choices") or [{}])[0].get("message", {}) or {}
+                content = (choice.get("content") or "").strip()
+                tcs = choice.get("tool_calls") or []
+                if content:
+                    agent.add_turn(
+                        self.task_id, "assistant", "text", f"[manager] {content}"
+                    )
+                    self._emit("assistant", f"[manager] {content}")
+                    journal.append(f"经理：{content[:300]}")
+                if not tcs:
+                    waiting_user = True
+                    final_text = content or "（需要你的进一步指示。）"
+                    break
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": choice.get("content") or "",
+                        "tool_calls": tcs,
+                    }
+                )
+            
             stop = False
-            for tc in tcs:
+            for i, tc in enumerate(tcs):
                 fn = tc.get("function", {}) or {}
                 name = fn.get("name", "")
                 try:
@@ -358,8 +691,13 @@ class DevTeamOrchestrator(BaseManager):
                     args = {}
 
                 if name == "ask_user_clarification":
-                    agent.add_turn(self.task_id, "assistant", "clarification_card",
-                                   json.dumps(args, ensure_ascii=False), tool_name=name)
+                    agent.add_turn(
+                        self.task_id,
+                        "assistant",
+                        "clarification_card",
+                        json.dumps(args, ensure_ascii=False),
+                        tool_name=name,
+                    )
                     self._emit("clarification", args)
                     waiting_user = True
                     final_text = "（已推送需求确认卡，等待你的选择/补充。）"
@@ -368,7 +706,9 @@ class DevTeamOrchestrator(BaseManager):
 
                 if name == "finish":
                     await_confirm = True
-                    final_text = (args.get("summary") or "").strip() or "改动已完成，待你确认。"
+                    final_text = (
+                        args.get("summary") or ""
+                    ).strip() or "改动已完成，待你确认。"
                     stop = True
                     break
 
@@ -376,16 +716,28 @@ class DevTeamOrchestrator(BaseManager):
                     to = args.get("to", "")
                     reason = (args.get("reason") or "").strip()
                     op = {"kind": "phase", "to": to, "reason": reason}
-                    status, r = self._gate_or_apply("manager", op, f"phase→{to}", journal)
+                    status, r = self._gate_or_apply(
+                        "manager", op, f"phase→{to}", journal
+                    )
                     if status == "gated":
                         await_state = True
                         final_text = f"即将推进阶段到 {to}，请确认。"
                         stop = True
+                        if i + 1 < len(tcs):
+                            dstore.set_kv(self.task_id, "pending_tool_calls", {"tcs": tcs[i + 1:]})
                         break
-                    feedback = (f"阶段已推进到 {to}" if status == "applied"
-                                else f"阶段推进被拒：{r.get('reason')}")
-                    messages.append({"role": "tool", "tool_call_id": tc.get("id"),
-                                     "content": feedback})
+                    feedback = (
+                        f"阶段已推进到 {to}"
+                        if status == "applied"
+                        else f"阶段推进被拒：{r.get('reason')}"
+                    )
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc.get("id"),
+                            "content": feedback,
+                        }
+                    )
                     continue
 
                 if name == "dispatch":
@@ -393,29 +745,50 @@ class DevTeamOrchestrator(BaseManager):
                     instruction = (args.get("instruction") or "").strip()
                     reason = (args.get("reason") or "").strip()
                     if reason:
-                        agent.add_turn(self.task_id, "assistant", "text", f"[manager] {reason}")
+                        agent.add_turn(
+                            self.task_id, "assistant", "text", f"[manager] {reason}"
+                        )
                         self._emit("assistant", f"[manager] {reason}")
                         journal.append(f"经理：{reason[:200]}")
                     if role not in WORKER_ROLES:
-                        messages.append({"role": "tool", "tool_call_id": tc.get("id"),
-                                         "content": f"未知角色：{role}，可选 {list(WORKER_ROLES)}"})
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc.get("id"),
+                                "content": f"未知角色：{role}，可选 {list(WORKER_ROLES)}",
+                            }
+                        )
                         continue
                     r = self._run_role(role, instruction, journal)
                     if r["gated"]:
                         await_state = True
                         final_text = f"{role} 提交的变更命中确认检查点，请确认。"
                         stop = True
+                        if i + 1 < len(tcs):
+                            dstore.set_kv(self.task_id, "pending_tool_calls", {"tcs": tcs[i + 1:]})
                         break
-                    messages.append({"role": "tool", "tool_call_id": tc.get("id"),
-                                     "content": r["text"][:6000]})
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc.get("id"),
+                            "content": r["text"][:6000],
+                        }
+                    )
                     continue
 
-                messages.append({"role": "tool", "tool_call_id": tc.get("id"),
-                                 "content": f"未知工具：{name}"})
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.get("id"),
+                        "content": f"未知工具：{name}",
+                    }
+                )
             if stop:
                 break
         else:
-            final_text = final_text or "（已达最大调度轮数，暂停，请查看进度并指示下一步。）"
+            final_text = (
+                final_text or "（已达最大调度轮数，暂停，请查看进度并指示下一步。）"
+            )
 
         if interrupted:
             final_text = final_text or "（已被用户中断，已保存进度，可继续指示。）"
@@ -426,18 +799,37 @@ class DevTeamOrchestrator(BaseManager):
             self._emit("assistant", final_text)
 
         if await_confirm:
-            agent.add_turn(self.task_id, "assistant", "confirm_card",
-                           json.dumps({"summary": final_text}, ensure_ascii=False))
+            agent.add_turn(
+                self.task_id,
+                "assistant",
+                "confirm_card",
+                json.dumps({"summary": final_text}, ensure_ascii=False),
+            )
             self._emit("await_confirm", {"summary": final_text})
 
-        self._finalize_status(waiting_user=waiting_user, await_confirm=await_confirm,
-                              await_state=await_state, interrupted=interrupted)
-        return {"final_text": final_text, "done": False, "waiting_user": waiting_user,
-                "await_confirm": await_confirm, "await_state_approval": await_state,
-                "interrupted": interrupted, "phase": self._phase()}
+        self._finalize_status(
+            waiting_user=waiting_user,
+            await_confirm=await_confirm,
+            await_state=await_state,
+            interrupted=interrupted,
+        )
+        return {
+            "final_text": final_text,
+            "done": False,
+            "waiting_user": waiting_user,
+            "await_confirm": await_confirm,
+            "await_state_approval": await_state,
+            "interrupted": interrupted,
+            "phase": self._phase(),
+        }
 
-    def _finalize_status(self, waiting_user=False, await_confirm=False,
-                         await_state=False, interrupted=False):
+    def _finalize_status(
+        self,
+        waiting_user=False,
+        await_confirm=False,
+        await_state=False,
+        interrupted=False,
+    ):
         if interrupted:
             st = "已挂起"
         elif await_state:

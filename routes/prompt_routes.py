@@ -285,7 +285,8 @@ def _get_sessions_list(h, query, session, session_id):
             continue
         s = get_session(d.name)
         char_name = s.active_prompts.get("character", "default")
-
+        if isinstance(char_name, list):
+            char_name = char_name[0] if char_name else "default"
         if char_name not in char_cache:
             cfile = PROMPTS_DIR / "character" / f"{_safe_name(char_name)}.json"
             if cfile.exists():

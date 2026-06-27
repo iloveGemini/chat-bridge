@@ -7,16 +7,23 @@
   - save_context(key, kind, content)：Context Engineer 专用，直接写 devteam_context（非状态）。
 角色的文本/工具调用照常落 turns，前端可见。
 """
+
 import json
 
 import runtime.coding_runtime as agent
 import runtime.devteam_store as dstore
-from agents.engine import run_tool_loop
 from agents.devteam.roles import ROLE_PROMPTS
-from tools.registry import get_tools, execute_tool
+from agents.engine import run_tool_loop
+from tools.registry import execute_tool, get_tools
 
 # 哪些角色可写状态（注入 submit_state）；context_engineer 注入 save_context
-STATE_WRITERS = ("architect", "designer", "programmer", "checker_tech", "checker_design")
+STATE_WRITERS = (
+    "architect",
+    "designer",
+    "programmer",
+    "checker_tech",
+    "checker_design",
+)
 
 
 def _submit_state_tool():
@@ -32,8 +39,15 @@ def _submit_state_tool():
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "layer": {"type": "string",
-                              "enum": ["architecture", "design", "implementation", "verification"]},
+                    "layer": {
+                        "type": "string",
+                        "enum": [
+                            "architecture",
+                            "design",
+                            "implementation",
+                            "verification",
+                        ],
+                    },
                     "patch": {"type": "object", "description": "合并进该层的字段对象"},
                     "reason": {"type": "string"},
                     "confidence": {"type": "integer", "description": "0~100"},
@@ -53,7 +67,10 @@ def _save_context_tool():
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "key": {"type": "string", "description": "简短标识，如 'auth-brief'"},
+                    "key": {
+                        "type": "string",
+                        "description": "简短标识，如 'auth-brief'",
+                    },
                     "kind": {"type": "string", "enum": ["brief", "summary"]},
                     "content": {"type": "string", "description": "整理后的事实性内容"},
                 },
@@ -85,8 +102,18 @@ def build_messages(role, handoff, workspace_tree=""):
     ]
 
 
-def run_role(role, handoff, *, chat_fn, tool_ctx, task_id, emit=None,
-             workspace_tree="", is_cancelled=None, max_rounds=8):
+def run_role(
+    role,
+    handoff,
+    *,
+    chat_fn,
+    tool_ctx,
+    task_id,
+    emit=None,
+    workspace_tree="",
+    is_cancelled=None,
+    max_rounds=8,
+):
     """跑一个角色，返回 {text, stop, intents}。
     intents = 该角色提交的 submit_state 意图列表（orchestrator 负责经 store 落地 + 确认门）。"""
     tools = _role_tools(role)
@@ -108,8 +135,13 @@ def run_role(role, handoff, *, chat_fn, tool_ctx, task_id, emit=None,
             _emit("assistant", f"[{role}] {c}")
 
     def _on_tool_call(name, args):
-        agent.add_turn(task_id, "assistant", "tool_call",
-                       {"name": name, "args": args}, tool_name=name)
+        agent.add_turn(
+            task_id,
+            "assistant",
+            "tool_call",
+            {"name": name, "args": args},
+            tool_name=name,
+        )
         _emit("tool_call", {"name": name, "args": args})
 
     def _execute(name, args):
@@ -122,25 +154,40 @@ def run_role(role, handoff, *, chat_fn, tool_ctx, task_id, emit=None,
                 "confidence": int(args.get("confidence", 100) or 100),
             }
             intents.append(intent)
-            return {"ok": True, "recorded": True,
-                    "note": "意图已记录，将由系统统一落地（如命中检查点会先请用户确认）"}
+            return {
+                "ok": True,
+                "recorded": True,
+                "note": "意图已记录，将由系统统一落地（如命中检查点会先请用户确认）",
+            }
         if name == "save_context":
-            return dstore.save_context(task_id, args.get("key"), args.get("kind") or "brief",
-                                       args.get("content") or "")
+            return dstore.save_context(
+                task_id,
+                args.get("key"),
+                args.get("kind") or "brief",
+                args.get("content") or "",
+            )
         return execute_tool(name, args, tool_ctx)
 
     def _on_tool_result(name, args, result, tc):
         result_str = json.dumps(result, ensure_ascii=False)
         agent.add_turn(task_id, "assistant", "tool_result", result_str, tool_name=name)
         _emit("tool_result", {"name": name, "result": result})
-        if name in ("read_file_with_lines", "grep_files", "glob_files", "get_outline",
-                    "get_function_code", "smart_file_insight"):
+        if name in (
+            "read_file_with_lines",
+            "grep_files",
+            "glob_files",
+            "get_outline",
+            "get_function_code",
+            "smart_file_insight",
+        ):
             findings.append(
                 f"# {name} {json.dumps(args, ensure_ascii=False)[:120]}\n{result_str[:2500]}"
             )
 
     out = run_tool_loop(
-        messages=messages, tools=tools, max_rounds=max_rounds,
+        messages=messages,
+        tools=tools,
+        max_rounds=max_rounds,
         chat=lambda m, t: chat_fn(m, t),
         execute=_execute,
         is_cancelled=is_cancelled,
@@ -153,5 +200,9 @@ def run_role(role, handoff, *, chat_fn, tool_ctx, task_id, emit=None,
     text = (out.get("content") or "").strip()
     # Context Engineer 的价值在它读到的原始内容，带给下游
     if role == "context_engineer" and findings:
-        text = (text + "\n\n" if text else "") + "【查到的原始内容】\n" + "\n\n".join(findings)[:9000]
+        text = (
+            (text + "\n\n" if text else "")
+            + "【查到的原始内容】\n"
+            + "\n\n".join(findings)[:9000]
+        )
     return {"text": text, "stop": stop, "intents": intents}
